@@ -21,7 +21,7 @@ Third-party components keep their own licenses and are **not** covered by the MI
 
 - `libraries/GFX_Library_for_Arduino/` - Waveshare fork, see `libraries/LICENSE-waveshare.txt`.
 - `assets/fonts/DejaVuSans*.ttf` - DejaVu fonts (free license).
-- `assets/fonts/Essentialsail*.ttf` and the generated `EssentialViewS3/es_fonts.h` - Essentialsail fonts, created by and copyright of Davide Schiavon (the repository author). They are included so the firmware can be built and used with this project; they are not covered by the MIT license, and any other use requires the author's permission.
+- `assets/fonts/Essentialsail*.ttf` and the generated `EssentialViewS3/es_fonts.h` - Essentialsail fonts, created by and copyright of Davide Schiavon, released under the [SIL Open Font License 1.1](assets/fonts/OFL.txt). The few symbols taken from DejaVu Sans keep the DejaVu license.
 
 ## Contributing
 
