@@ -1,0 +1,105 @@
+#pragma once
+// Testo con i font Essentialsail (es_fonts.h, generato da tools/make_fonts.py).
+// Ogni glifo e' una maschera a 8 bit: si mescola sul colore gia' presente nel buffer (anti-aliasing).
+// Incluso da EssentialViewS3.ino dopo la dichiarazione di cv e cfg.
+#include "es_fonts.h"
+
+static const EsFont *esFont = &F_TEXT;
+static uint16_t esColor = 0xFFFF;
+
+inline void tFont(const EsFont *f) { esFont = f; }
+inline void tColor(uint16_t c) { esColor = c; }
+
+// Mescola il colore s sul colore d con opacita' a (0-255), in RGB565
+static inline uint16_t blend565(uint16_t d, uint16_t s, uint8_t a) {
+  if (a == 255) return s;
+  int dr = d >> 11, dg = (d >> 5) & 63, db = d & 31;
+  int sr = s >> 11, sg = (s >> 5) & 63, sb = s & 31;
+  int ia = 255 - a;
+  int r = (sr * a + dr * ia + 127) / 255;
+  int g = (sg * a + dg * ia + 127) / 255;
+  int b = (sb * a + db * ia + 127) / 255;
+  return (uint16_t)((r << 11) | (g << 5) | b);
+}
+
+// Prossimo carattere Unicode di una stringa UTF-8 (serve per il simbolo del grado)
+static uint16_t nextCp(const char *&s) {
+  uint8_t c = (uint8_t)*s++;
+  if (c < 0x80) return c;
+  if ((c & 0xE0) == 0xC0 && *s) return ((c & 0x1F) << 6) | ((uint8_t)*s++ & 0x3F);
+  if ((c & 0xF0) == 0xE0 && s[0] && s[1]) {
+    uint16_t cp = ((c & 0x0F) << 12) | (((uint8_t)s[0] & 0x3F) << 6) | ((uint8_t)s[1] & 0x3F);
+    s += 2;
+    return cp;
+  }
+  return '?';
+}
+
+static const EsGlyph *esGlyph(const EsFont *f, uint16_t cp) {
+  for (uint16_t i = 0; i < f->n; i++)
+    if (f->cp[i] == cp) return &f->g[i];
+  return nullptr;
+}
+
+// Le cifre tabulari lasciano spazio a destra: il simbolo del grado si avvicina all'ultima cifra
+static int degTrim(const EsGlyph *prev) {
+  if (!prev) return 0;
+  int t = prev->adv - (prev->xo + prev->w) - esFont->capH / 12;
+  return t > 0 ? t : 0;
+}
+
+// Larghezza in pixel di una stringa col font corrente (somma degli avanzamenti)
+int tWidth(const String &str) {
+  const char *s = str.c_str();
+  int w = 0;
+  const EsGlyph *prev = nullptr;
+  while (*s) {
+    uint16_t cp = nextCp(s);
+    const EsGlyph *g = esGlyph(esFont, cp);
+    if (!g) g = esGlyph(esFont, ' ');
+    if (!g) continue;
+    if (cp == 0xB0) w -= degTrim(prev);
+    w += g->adv;
+    prev = g;
+  }
+  return w;
+}
+
+static void blitGlyph(const EsGlyph *g, int x, int base) {
+  if (!g->w || !g->h) return;
+  const uint8_t *src = esFont->bmp + g->off;
+  const int gx = x + g->xo, gy = base + g->yo;
+  uint16_t *fb = cv->getFramebuffer();
+  const bool rot = cfg.rot == 2;  // il buffer e' ruotato di 180 gradi: stessa trasformazione del canvas
+  for (int j = 0; j < g->h; j++) {
+    int py = gy + j;
+    if (py < 0 || py >= SCR_H) continue;
+    for (int i = 0; i < g->w; i++) {
+      uint8_t a = src[j * g->w + i];
+      if (!a) continue;
+      int px = gx + i;
+      if (px < 0 || px >= SCR_W) continue;
+      uint32_t idx = rot ? (uint32_t)(SCR_H - 1 - py) * SCR_W + (SCR_W - 1 - px) : (uint32_t)py * SCR_W + px;
+      fb[idx] = blend565(fb[idx], esColor, a);
+    }
+  }
+}
+
+// x = bordo sinistro, base = linea di base
+void tAt(int x, int base, const String &str) {
+  const char *s = str.c_str();
+  const EsGlyph *prev = nullptr;
+  while (*s) {
+    uint16_t cp = nextCp(s);
+    const EsGlyph *g = esGlyph(esFont, cp);
+    if (!g) g = esGlyph(esFont, ' ');
+    if (!g) continue;
+    if (cp == 0xB0) x -= degTrim(prev);
+    blitGlyph(g, x, base);
+    x += g->adv;
+    prev = g;
+  }
+}
+void tC(const String &s, int cx, int base) { tAt(cx - tWidth(s) / 2, base, s); }   // centrato in orizzontale
+void tR(const String &s, int xr, int base) { tAt(xr - tWidth(s), base, s); }       // allineato a destra
+void tCC(const String &s, int cx, int cy) { tC(s, cx, cy + esFont->capH / 2); }    // centrato anche in verticale

@@ -1,0 +1,27 @@
+/* Essentialsail type family */
+@font-face {
+  font-family: "Essentialsail Display";
+  src: url("EssentialsailDisplay-Bold.woff2") format("woff2"),
+       url("EssentialsailDisplay-Bold.ttf") format("truetype");
+  font-weight: 700; font-style: normal; font-display: swap;
+}
+@font-face {
+  font-family: "Essentialsail Text";
+  src: url("EssentialsailText-Regular.woff2") format("woff2"),
+       url("EssentialsailText-Regular.ttf") format("truetype");
+  font-weight: 400; font-style: normal; font-display: swap;
+}
+h1, h2, h3 { font-family: "Essentialsail Display", sans-serif; font-weight: 700; letter-spacing: 0.01em; }
+body       { font-family: "Essentialsail Text", sans-serif; font-weight: 400; line-height: 1.5; }
+
+/* Navigation letters — letters that double as nautical symbols.
+   Use one per word (e.g. the O of "OCEAN") or alone as an icon.
+   Type the code directly:  &#xE002;CEAN   or in CSS:  content: "\E002";
+     U+E000 A  Sailboat     U+E003 U  Anchor      U+E006 P  Flag
+     U+E001 N  North        U+E004 X  Waypoint    U+E007 W  Waves
+     U+E002 O  Compass      U+E005 S  Route       U+E008 I  Lighthouse
+   Or swap all nine letters at once with the stylistic set: */
+.es-nav-letters { font-feature-settings: "ss01" 1; }
+
+/* Fixed-width (tabular) figures for instrument readouts — values don't jump as they change */
+.es-readout { font-variant-numeric: tabular-nums; }   /* = font-feature-settings: "tnum" 1 */

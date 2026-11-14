@@ -1,0 +1,124 @@
+"""Genera EssentialViewS3/es_fonts.h dai font Essentialsail (assets/fonts/*.ttf).
+
+Ogni font diventa una tabella di glifi con bitmap a 8 bit (anti-aliasing, 256 livelli di trasparenza)
+che il firmware mescola sul colore di sfondo (es_text.h). Le cifre usano le figure tabulari 'tnum' del font
+(tutte della stessa larghezza: i valori non "ballano" quando cambiano).
+I 9 simboli ASCII che i font Essentialsail non hanno ($ & @ \\ ^ ` { } ~) vengono da DejaVu Sans (licenza libera):
+servono solo per digitare le password sul display.
+
+Uso:  python tools/make_fonts.py        (da firmware-s3-amoled/, serve Pillow e fontTools)
+"""
+import io
+import os
+import sys
+
+from fontTools.ttLib import TTFont
+from PIL import Image, ImageDraw, ImageFont
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+FONTS = os.path.join(HERE, "..", "assets", "fonts")
+OUT = os.path.join(HERE, "..", "EssentialViewS3", "es_fonts.h")
+
+DISPLAY = os.path.join(FONTS, "EssentialsailDisplay-Bold.ttf")
+TEXT = os.path.join(FONTS, "EssentialsailText-Regular.ttf")
+FALLBACK = {DISPLAY: os.path.join(FONTS, "DejaVuSans-Bold.ttf"), TEXT: os.path.join(FONTS, "DejaVuSans.ttf")}
+
+ASCII = [chr(c) for c in range(0x20, 0x7F)]
+DEGREE = "°"
+FULL = ASCII + [DEGREE]
+DIGITS = list(" 0123456789.-+:") + [DEGREE]
+
+# nome, file, altezza in pixel (corpo), caratteri
+SPECS = [
+    ("F_NUM_XL", DISPLAY, 96, DIGITS),    # profondita' grande
+    ("F_NUM_L", DISPLAY, 52, DIGITS),      # valori delle schede
+    ("F_NUM_M", DISPLAY, 34, DIGITS),      # AWA / TWA
+    ("F_HEAD_M", DISPLAY, 24, FULL),       # prua al centro del quadrante
+    ("F_HEAD_L", DISPLAY, 30, FULL),       # prua, titoli grandi, editor
+    ("F_HEAD", DISPLAY, 21, FULL),         # intestazioni, tasti, punti cardinali
+    ("F_TEXT", TEXT, 16, FULL),            # etichette, menu, diagnostica
+    ("F_TEXT_S", TEXT, 13, FULL),          # suggerimenti
+]
+
+
+def tnum_font(path):
+    """TTF con le cifre 0-9 sostituite dalle figure tabulari (feature 'tnum')."""
+    t = TTFont(path)
+    gsub = t["GSUB"].table
+    mapping = {}
+    for fr in gsub.FeatureList.FeatureRecord:
+        if fr.FeatureTag == "tnum":
+            for li in fr.Feature.LookupListIndex:
+                for st in gsub.LookupList.Lookup[li].SubTable:
+                    m = getattr(st, "mapping", None)
+                    if m:
+                        mapping.update(m)
+    if not mapping:
+        sys.exit("tnum non trovato in " + path)
+    for table in t["cmap"].tables:
+        for ch in "0123456789":
+            name = table.cmap.get(ord(ch))
+            if name in mapping:
+                table.cmap[ord(ch)] = mapping[name]
+    buf = io.BytesIO()
+    t.save(buf)
+    buf.seek(0)
+    return buf
+
+
+def has_glyph(path, ch):
+    return ord(ch) in TTFont(path).getBestCmap()
+
+
+def render(font, ch, px):
+    """Bitmap L del carattere: (w, h, xo, yo, adv, bytes). yo = distanza dalla linea di base al bordo alto."""
+    pad, base = px, int(px * 1.5)
+    img = Image.new("L", (int(px * 2.5), int(px * 2.4)), 0)
+    ImageDraw.Draw(img).text((pad, base), ch, font=font, fill=255, anchor="ls")
+    adv = int(round(font.getlength(ch)))
+    box = img.getbbox()
+    if not box:
+        return 0, 0, 0, 0, adv, b""
+    crop = img.crop(box)
+    return crop.width, crop.height, box[0] - pad, box[1] - base, adv, crop.tobytes()
+
+
+def main():
+    tn = {p: tnum_font(p) for p in (DISPLAY, TEXT)}
+    out = ["// Generato da tools/make_fonts.py dai font Essentialsail: non modificare a mano.",
+           "// Bitmap a 8 bit (anti-aliasing); le cifre sono le figure tabulari del font.",
+           "#pragma once", "#include <stdint.h>", "",
+           "struct EsGlyph { uint32_t off; uint16_t w, h; int16_t xo, yo; uint16_t adv; };",
+           "struct EsFont { const EsGlyph *g; const uint8_t *bmp; const uint16_t *cp; uint16_t n; int16_t capH; };", ""]
+    total = 0
+    for name, path, px, chars in SPECS:
+        main_font = ImageFont.truetype(io.BytesIO(tn[path].getvalue()), px)
+        fb_path = FALLBACK[path]
+        fb_font = ImageFont.truetype(fb_path, int(px * 0.92))   # DejaVu e' un po' piu' grande
+        bmp, glyphs, cps, fallback = bytearray(), [], [], []
+        for ch in chars:
+            if has_glyph(path, ch):
+                w, h, xo, yo, adv, data = render(main_font, ch, px)
+            else:
+                w, h, xo, yo, adv, data = render(fb_font, ch, px)
+                fallback.append(ch)
+            glyphs.append((len(bmp), w, h, xo, yo, adv))
+            cps.append(ord(ch))
+            bmp += data
+        capH = -render(main_font, "0" if "0" in chars else "H", px)[3]
+        total += len(bmp)
+        out.append(f"static const uint8_t {name}_bmp[] = {{{','.join(str(b) for b in bmp)}}};")
+        out.append(f"static const EsGlyph {name}_g[] = {{" +
+                   ",".join("{%d,%d,%d,%d,%d,%d}" % g for g in glyphs) + "};")
+        out.append(f"static const uint16_t {name}_cp[] = {{{','.join(str(c) for c in cps)}}};")
+        out.append(f"static const EsFont {name} = {{{name}_g, {name}_bmp, {name}_cp, {len(cps)}, {capH}}};")
+        out.append("")
+        print(f"{name:9s} {px:3d}px  {len(chars):3d} glifi  {len(bmp) / 1024:7.1f} KB  capH {capH}"
+              + (f"  (DejaVu: {''.join(fallback)})" if fallback else ""))
+    with open(OUT, "w", encoding="utf-8", newline="\n") as fh:
+        fh.write("\n".join(out))
+    print(f"totale bitmap {total / 1024:.0f} KB -> {os.path.normpath(OUT)}")
+
+
+if __name__ == "__main__":
+    main()
