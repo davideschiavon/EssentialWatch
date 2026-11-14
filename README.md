@@ -12,3 +12,18 @@ EssentialView (NMEA 0183 wind / speed / depth display) ported to the
 - NMEA is received over Wi-Fi (TCP); the board has no RS485.
 
 Build: `arduino-cli compile --fqbn <FQBN above> --libraries libraries EssentialViewS3`
+
+## License
+
+The original code in this repository is released under the [MIT License](LICENSE).
+
+Third-party components keep their own licenses and are **not** covered by the MIT license above:
+
+- `libraries/GFX_Library_for_Arduino/` - Waveshare fork, see `libraries/LICENSE-waveshare.txt`.
+- `assets/fonts/DejaVuSans*.ttf` - DejaVu fonts (free license).
+- `assets/fonts/Essentialsail*.ttf` and the generated `EssentialViewS3/es_fonts.h` - Essentialsail fonts, all rights remain with their owner.
+
+## Contributing
+
+Contributions are welcome: open an issue to discuss an idea or a bug, or send a pull request.
+By submitting a contribution you agree that it is released under the MIT License.
