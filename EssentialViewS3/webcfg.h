@@ -32,7 +32,10 @@ String cfgJson() {
   d["cpa"] = serialized(String(cfg.cpaNm, 2));
   d["tcpa"] = serialized(String(cfg.tcpaMin, 0));
   d["lang"] = LANG_CODES[cfg.lang];
-  d["night"] = cfg.night;
+  d["night"] = cfg.theme == THEME_NIGHT;
+  d["theme"] = cfg.theme;
+  d["sleep"] = cfg.sleepSec;
+  d["raise"] = cfg.raise;
   d["rot"] = cfg.rot;
   d["tz"] = cfg.tz;
   d["bright"] = cfg.bright;
@@ -59,7 +62,10 @@ String backupJson() {
   d["cpa"] = serialized(String(cfg.cpaNm, 2));
   d["tcpa"] = serialized(String(cfg.tcpaMin, 0));
   d["lang"] = LANG_CODES[cfg.lang];
-  d["night"] = cfg.night;
+  d["night"] = cfg.theme == THEME_NIGHT;
+  d["theme"] = cfg.theme;
+  d["sleep"] = cfg.sleepSec;
+  d["raise"] = cfg.raise;
   d["rot"] = cfg.rot;
   d["tz"] = cfg.tz;
   String s;
@@ -107,6 +113,9 @@ String statusJson() {
     d["boot"] = digitalRead(BOOT_PIN);
     d["alert"] = alertActive;
   d["vib"] = cfg.vibPin; d["vibon"] = vibNow;
+    d["screen"] = screenOn;
+    d["imu"] = imuAddr != 0;
+    if (imuAddr) { JsonArray g = d["g"].to<JsonArray>(); for (int i = 0; i < 3; i++) g.add(serialized(String(imuG[i], 2))); }   // acceleration in g (x, y, z)
     d["snooze"] = snoozed() ? (int)((snoozeUntil - millis()) / 1000) : 0;
     d["screen"] = screenOn;
   }
@@ -183,7 +192,18 @@ String applyCfg(const String &body, bool &needRestart, bool fromWeb = false) {
     if (l < 0) return "language: en, fr, es";
     n.lang = l;
   }
-  if (!d["night"].isNull()) n.night = d["night"].as<bool>();
+  if (!d["sleep"].isNull()) {
+    int v = d["sleep"].as<int>();
+    if (v < 0 || v > 3600) return "screen timeout: 0 (never) to 3600 s";
+    n.sleepSec = v;
+  }
+  if (!d["raise"].isNull()) n.raise = d["raise"].as<bool>();
+  if (!d["night"].isNull()) n.theme = d["night"].as<bool>() ? THEME_NIGHT : THEME_DAY;   // older clients and backups
+  if (!d["theme"].isNull()) {
+    int t = d["theme"].as<int>();
+    if (t < 0 || t >= THEME_COUNT) return "theme: 0 day, 1 elegant black, 2 night";
+    n.theme = t;
+  }
   if (!d["rot"].isNull()) n.rot = d["rot"].as<int>() == 2 ? 2 : 0;
   if (!d["bright"].isNull()) {
     int bv = d["bright"].as<int>();
@@ -220,7 +240,7 @@ String applyCfg(const String &body, bool &needRestart, bool fromWeb = false) {
   }
   needRestart = n.ssid != cfg.ssid || n.pass != cfg.pass || n.name != cfg.name;
   bool srvChanged = n.host != cfg.host || n.port != cfg.port;
-  bool look = n.night != cfg.night || n.rot != cfg.rot;
+  bool look = n.theme != cfg.theme || n.rot != cfg.rot;
   cfg = n;
   if (vibNew != cfg.vibPin) vibSetPin(vibNew);   // releases the old pin, drives the new one low
   saveCfg();
@@ -236,7 +256,7 @@ String applyCfg(const String &body, bool &needRestart, bool fromWeb = false) {
 String okJson(bool restart) { return String("{\"ok\":true,\"restart\":") + (restart ? "true" : "false") + "}"; }
 String errJson(const String &e) { return String("{\"ok\":false,\"error\":\"") + e + "\"}"; }
 
-// watch keys from the web page: right / left = swipe, dtap = double tap (day/night),
+// watch keys from the web page: right / left = swipe, dtap = double tap (next theme),
 // power = PWR button (screen on/off), boot = BOOT button (alarm snooze)
 bool sendKeyName(const String &k) {
   if (!screenOn && k != "power") screenSet(true);

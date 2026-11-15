@@ -2,6 +2,19 @@
 
 Every version is published as a GitHub Release (firmware .bin + these notes); the watch web page lists them.
 
+## 2.7.0
+
+- **Elegant Black theme**, inspired by the dark theme of EssentialSail (EssentialAIS): near-black green background, graphite cards,
+  off-white text, orange accent, amber warnings. Three themes now: Day, Elegant Black, Night (red only). Choose it in the watch menu
+  (Settings > Theme) or on the web page (Display > Theme); double tap (or BACK on the dashboard) cycles day > Elegant Black > night.
+  Old configurations and backups with `night` keep working.
+- **Screen timeout**: the screen turns off after 30 s (default) without touch or buttons: Off / 15 s / 30 s / 1 min / 2 min / 5 min
+  (menu "Screen timeout", web page Display). It never turns off during a collision or depth alarm, and menus wait at least 2 minutes.
+- **Raise to wake**: the QMI8658 accelerometer wakes the screen when the watch is raised to be looked at (screen facing up or down, watch still
+  for 0.35 s, after being lowered). A watch lying still on a table does not wake by itself; touch, a button or an alarm always wake it.
+  Switch it off in the menu ("Raise to wake") or on the web page.
+- Status JSON: `screen` (on/off), `imu` (sensor found) and `g` (acceleration x, y, z in g). USB command `Z` wakes the screen (test).
+
 ## 2.6.0
 
 - **Languages**: English, French and Spanish, on the watch (pages, settings, messages, day and month names,

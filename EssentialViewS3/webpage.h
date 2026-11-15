@@ -103,7 +103,11 @@ legend{font-family:"Baloo 2",system-ui,sans-serif;font-weight:700;color:var(--pr
  <div class="hint" data-t="dhint"></div>
  <label for="tz" data-t="tz"></label><input id="tz" maxlength="63" placeholder="CET-1CEST,M3.5.0,M10.5.0/3">
  <div class="hint" data-t="tzhint"></div>
- <div class="check"><input type="checkbox" id="night"><span data-t="night"></span></div>
+ <div class="row"><div><label for="sleep" data-t="sleep"></label><select id="sleep"><option value="0" data-t="never"></option><option value="15">15 s</option><option value="30">30 s</option><option value="60">1 min</option><option value="120">2 min</option><option value="300">5 min</option></select></div>
+ <div class="check" style="margin-top:28px"><input type="checkbox" id="raise"><span data-t="raise"></span></div></div>
+ <div class="hint" data-t="sleephint"></div>
+ <label for="theme" data-t="theme"></label>
+ <select id="theme"><option value="0" data-t="th0"></option><option value="1" data-t="th1"></option><option value="2" data-t="th2"></option></select>
 </fieldset>
 <fieldset><legend data-t="datetime"></legend>
  <div class="hint"><span data-t="wtime"></span> <b id="wtime">--</b> <span id="wsrc"></span></div>
@@ -203,7 +207,14 @@ tz:['Time zone (POSIX string, automatic daylight saving)',"Fuseau horaire (chaî
 tzhint:['Time comes from NTP (if the WiFi has Internet) or from the GPS (NMEA RMC/ZDA). Central Europe: CET-1CEST,M3.5.0,M10.5.0/3 · UTC: UTC0',
  "L'heure vient du NTP (si le WiFi a Internet) ou du GPS (NMEA RMC/ZDA). Europe centrale : CET-1CEST,M3.5.0,M10.5.0/3 · UTC : UTC0",
  'La hora viene de NTP (si el WiFi tiene Internet) o del GPS (NMEA RMC/ZDA). Europa central: CET-1CEST,M3.5.0,M10.5.0/3 · UTC: UTC0'],
-night:['Night mode (red, dark)','Mode nuit (rouge, sombre)','Modo noche (rojo, oscuro)'],
+theme:['Theme','Thème','Tema'],
+sleep:['Screen timeout','Veille de l'écran','Apagado de pantalla'],
+never:['Never','Jamais','Nunca'],
+raise:['Raise to wake','Lever pour réveiller','Levantar para activar'],
+sleephint:['The screen turns off after this time without touch or buttons (never during an alarm). Touch, a button, an alarm, or raising the watch to look at it wakes it.','L'écran s'éteint après ce délai sans toucher ni bouton (jamais pendant une alarme). Un toucher, un bouton, une alarme ou le geste de lever la montre pour la regarder le réveille.','La pantalla se apaga tras este tiempo sin toque ni botones (nunca durante una alarma). Un toque, un botón, una alarma o levantar el reloj para mirarlo la activa.'],
+th0:['Day','Jour','Día'],
+th1:['Elegant Black','Noir élégant','Negro elegante'],
+th2:['Night (red only)','Nuit (rouge seulement)','Noche (solo rojo)'],
 datetime:['Date and time','Date et heure','Fecha y hora'],
 wtime:['Watch time:','Heure de la montre :','Hora del reloj:'],
 tgo:['Set time',"Régler l'heure",'Ajustar hora'],
@@ -233,9 +244,9 @@ screen:['Screen','Écran','Pantalla'],
 right:['Right','Droite','Derecha'],
 left:['Left','Gauche','Izquierda'],
 dtap:['Double Tap','Double tap','Doble toque'],
-screenhint:['The picture refreshes every 10 s. Right / Left = previous / next page · Double Tap = day / night · Power = screen on / off (hold the real button 4 s to power the watch off) · Boot = snooze the collision alarm for 5 minutes.',
- "L'image se met à jour toutes les 10 s. Droite / Gauche = page précédente / suivante · Double tap = jour / nuit · Power = écran allumé / éteint (maintenir le vrai bouton 4 s pour éteindre la montre) · Boot = pause de l'alarme de collision pendant 5 minutes.",
- 'La imagen se actualiza cada 10 s. Derecha / Izquierda = página anterior / siguiente · Doble toque = día / noche · Power = pantalla encendida / apagada (mantenga el botón real 4 s para apagar el reloj) · Boot = pausa de la alarma de colisión durante 5 minutos.'],
+screenhint:['The picture refreshes every 10 s. Right / Left = previous / next page · Double Tap = next theme · Power = screen on / off (hold the real button 4 s to power the watch off) · Boot = snooze the collision alarm for 5 minutes.',
+ "L'image se met à jour toutes les 10 s. Droite / Gauche = page précédente / suivante · Double tap = thème suivant · Power = écran allumé / éteint (maintenir le vrai bouton 4 s pour éteindre la montre) · Boot = pause de l'alarme de collision pendant 5 minutes.",
+ 'La imagen se actualiza cada 10 s. Derecha / Izquierda = página anterior / siguiente · Doble toque = tema siguiente · Power = pantalla encendida / apagada (mantenga el botón real 4 s para apagar el reloj) · Boot = pausa de la alarma de colisión durante 5 minutos.'],
 installed:['Installed version','Version installée','Versión instalada'],
 fwfind:['Search firmware','Chercher un firmware','Buscar firmware'],
 fwsel:['Firmware on GitHub (latest first)',"Firmware sur GitHub (le plus récent d'abord)",'Firmware en GitHub (el más reciente primero)'],
@@ -403,7 +414,7 @@ async function status(){try{const s=await api('/api/status');
 async function load(){cfg=await api('/api/config');
  if(cfg.lang)setLang(cfg.lang);
  for(const k of['ssid','host','port','dalarm','cpa','tcpa','name','tz'])$(k).value=cfg[k];
- $('rot').value=cfg.rot;$('night').checked=cfg.night;$('pass').value='';$('webpass').value='';
+ $('rot').value=cfg.rot;$('theme').value=cfg.theme??(cfg.night?2:0);$('sleep').value=cfg.sleep;$('raise').checked=!!cfg.raise;$('pass').value='';$('webpass').value='';
  $('pass').placeholder=cfg.pass_set?t('unchanged'):t('nonep');$('webpass2').value='';$('fwv').textContent=cfg.fw;
  $('vib').value=cfg.vib;
  $('pwdef').innerHTML=cfg.webpass_default?`<span class="warn">${t('pwwarn')}</span>`:'';
@@ -412,7 +423,7 @@ async function load(){cfg=await api('/api/config');
 async function save(andRestart){
  if(cfg&&cfg.webpass_default&&!$('webpass').value){msg(t('pwfirst2'),false);return}
  const b={name:$('name').value.trim(),vib:+$('vib').value,ssid:$('ssid').value,host:$('host').value.trim(),lang:$('lang').value,
-  port:+$('port').value,dalarm:+$('dalarm').value,cpa:+$('cpa').value,tcpa:+$('tcpa').value,tz:$('tz').value.trim(),night:$('night').checked,rot:+$('rot').value};
+  port:+$('port').value,dalarm:+$('dalarm').value,cpa:+$('cpa').value,tcpa:+$('tcpa').value,tz:$('tz').value.trim(),theme:+$('theme').value,sleep:+$('sleep').value,raise:$('raise').checked,rot:+$('rot').value};
  if($('openn').checked)b.pass='';else if($('pass').value)b.pass=$('pass').value;
  if($('webpass').value){if($('webpass').value!==$('webpass2').value){msg(t('pwdiff'),false);return}
   b.webpass=$('webpass').value}

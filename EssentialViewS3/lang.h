@@ -22,6 +22,15 @@ static const Tr TR[] = {
   {"Collision CPA", "CPA collision", "CPA colisión"},
   {"Collision TCPA", "TCPA collision", "TCPA colisión"},
   {"Language", "Langue", "Idioma"},
+  {"Theme", "Thème", "Tema"},
+  {"Screen timeout", "Veille écran", "Apagado pantalla"},
+  {"Raise to wake", "Lever pour réveiller", "Levantar para activar"},
+  {"Never", "Jamais", "Nunca"},
+  {"On", "Activé", "Activado"},
+  {"Off", "Désactivé", "Desactivado"},
+  {"Day", "Jour", "Día"},
+  {"Elegant Black", "Noir élégant", "Negro elegante"},
+  {"Night", "Nuit", "Noche"},
   {"Diagnostics", "Diagnostic", "Diagnóstico"},
   {"Save and restart", "Enregistrer et redémarrer", "Guardar y reiniciar"},
   {"Restart", "Redémarrer", "Reiniciar"},
@@ -79,7 +88,7 @@ static const Tr TR[] = {
   {"FACTORY RESET", "RÉINITIALISATION", "RESTABLECER"},
   {"All settings will be erased:", "Tous les réglages seront effacés :", "Se borrarán todos los ajustes:"},
   {"boat WiFi, NMEA server, alarm,", "WiFi bateau, serveur NMEA, alarme,", "WiFi del barco, servidor NMEA, alarma,"},
-  {"name, orientation, night mode,", "nom, orientation, mode nuit,", "nombre, orientación, modo noche,"},
+  {"name, orientation, theme,", "nom, orientation, thème,", "nombre, orientación, tema,"},
   {"admin password (back to admin).", "mot de passe admin (retour à admin).", "contraseña admin (vuelve a admin)."},
   {"The device restarts in setup mode:", "L'appareil redémarre en mode config :", "El equipo se reinicia en modo config.:"},
   {"open WiFi", "WiFi ouvert", "WiFi abierto"},
@@ -123,6 +132,8 @@ static const Tr TR[] = {
   {"CPA %s in %d min    %.1f kn", "CPA %s dans %d min    %.1f kn", "CPA %s en %d min    %.1f kn"},
   {"Not approaching    %.1f kn", "S'éloigne    %.1f kn", "Se aleja    %.1f kn"},
 };
+
+static const char *const THEME_NAMES[3] = {"Day", "Elegant Black", "Night"};   // index = cfg.theme
 
 // Text in the current language (the English text when the table has no translation)
 static const char *T(const char *en) {

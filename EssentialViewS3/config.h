@@ -5,7 +5,7 @@
 //  (ESP32-S3, 2.06" 410x502 QSPI CO5300 AMOLED, FT3168 touch, AXP2101 PMU)
 // ---------------------------------------------------------------
 
-#define FW_VERSION "2.6.0-s3"
+#define FW_VERSION "2.7.0-s3"
 
 // Logical resolution of the interface (same as the panel, portrait)
 #define SCR_W 410

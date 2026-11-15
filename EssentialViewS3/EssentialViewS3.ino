@@ -77,6 +77,14 @@ const Theme NIGHT_THEME = {
   rgb565(84, 14, 14), rgb565(225, 38, 38), rgb565(255, 120, 120), rgb565(150, 26, 26),
   rgb565(255, 50, 50), rgb565(58, 8, 8), rgb565(200, 48, 48), rgb565(255, 60, 60), rgb565(255, 150, 150), rgb565(74, 6, 6),
 };
+// Elegant Black: the dark theme of EssentialSail (EssentialAIS preview): near-black green background, graphite
+// cards, off-white text, orange accent, amber for warnings. Colours sampled from EssentialSail_AIS_preview_ElegantBlack.png.
+const Theme BLACK_THEME = {
+  rgb565(11, 18, 14), rgb565(47, 50, 50), rgb565(232, 227, 225), rgb565(154, 154, 150),
+  rgb565(70, 74, 72), rgb565(235, 102, 45), rgb565(248, 176, 72), rgb565(102, 187, 106),
+  rgb565(255, 69, 58), rgb565(225, 220, 216), rgb565(58, 52, 46), rgb565(248, 152, 0), rgb565(248, 176, 72), rgb565(74, 36, 28),
+};
+enum ThemeId : uint8_t { THEME_DAY = 0, THEME_BLACK = 1, THEME_NIGHT = 2, THEME_COUNT = 3 };
 Theme TH = DAY_THEME;  // active theme (applyTheme)
 
 // ============================== Settings ==============================
@@ -88,7 +96,10 @@ struct Settings {
   float depthAlarm = 2.0f;
   float cpaNm = AIS_CPA_NM;       // collision alarm (and red target, vibration): CPA below this (nm) ...
   float tcpaMin = AIS_TCPA_MIN;   // ... within this many minutes; a boat closer than the CPA value is also "at risk"
-  bool night = false;
+  uint16_t sleepSec = 30;      // screen off after this many seconds without touch or button (0 = never)
+  bool raise = true;           // wake the screen when the watch is raised to be looked at (accelerometer)
+  uint8_t theme = THEME_DAY;   // 0 day, 1 Elegant Black, 2 night (red only)
+  bool night = false;          // derived: theme == THEME_NIGHT (red-only look: opaque widgets, no gradients)
   String name;        // device name: http://<name>.local and configuration network
   uint8_t rot = 0;    // screen rotation: 0 or 2 (180 degrees)
   String webpass;     // web page password (user WEB_USER), never empty
@@ -107,7 +118,9 @@ void loadCfg() {
   cfg.depthAlarm = prefs.getFloat("dalarm", 2.0f);
   cfg.cpaNm = prefs.getFloat("cpa", AIS_CPA_NM);
   cfg.tcpaMin = prefs.getFloat("tcpa", AIS_TCPA_MIN);
-  cfg.night = prefs.getBool("night", false);
+  cfg.theme = prefs.isKey("theme") ? prefs.getUChar("theme", THEME_DAY) : (prefs.getBool("night", false) ? THEME_NIGHT : THEME_DAY);   // older versions only had "night"
+  if (cfg.theme >= THEME_COUNT) cfg.theme = THEME_DAY;
+  cfg.night = cfg.theme == THEME_NIGHT;
   cfg.name = prefs.getString("name", DEFAULT_DEVICE_NAME);
   cfg.rot = prefs.getUChar("rot", SCREEN_ROTATION);
   cfg.webpass = prefs.getString("webpass", WEB_DEFAULT_PASS);
@@ -116,6 +129,8 @@ void loadCfg() {
   cfg.tz = prefs.getString("tz", DEFAULT_TZ);
   if (!cfg.tz.length()) cfg.tz = DEFAULT_TZ;
   cfg.vibPin = prefs.getChar("vib", VIB_PIN);
+  cfg.sleepSec = prefs.getUShort("sleep", 30);
+  cfg.raise = prefs.getBool("raise", true);
   cfg.lang = prefs.getUChar("lang", 0);
   if (cfg.lang > 2) cfg.lang = 0;
   prefs.end();
@@ -129,17 +144,25 @@ void saveCfg() {
   prefs.putFloat("dalarm", cfg.depthAlarm);
   prefs.putFloat("cpa", cfg.cpaNm);
   prefs.putFloat("tcpa", cfg.tcpaMin);
-  prefs.putBool("night", cfg.night);
+  prefs.putBool("night", cfg.theme == THEME_NIGHT);
+  prefs.putUChar("theme", cfg.theme);
   prefs.putString("name", cfg.name);
   prefs.putUChar("rot", cfg.rot);
   prefs.putString("webpass", cfg.webpass);
   prefs.putString("tz", cfg.tz);
   prefs.putUChar("bright", cfg.bright);
   prefs.putChar("vib", cfg.vibPin);
+  prefs.putUShort("sleep", cfg.sleepSec);
+  prefs.putBool("raise", cfg.raise);
   prefs.putUChar("lang", cfg.lang);
   prefs.end();
 }
-void applyTheme() { TH = cfg.night ? NIGHT_THEME : DAY_THEME; }
+void applyTheme() {
+  if (cfg.theme >= THEME_COUNT) cfg.theme = THEME_DAY;
+  cfg.night = cfg.theme == THEME_NIGHT;
+  TH = cfg.theme == THEME_NIGHT ? NIGHT_THEME : (cfg.theme == THEME_BLACK ? BLACK_THEME : DAY_THEME);
+}
+void cycleTheme() { cfg.theme = (cfg.theme + 1) % THEME_COUNT; applyTheme(); }   // day -> Elegant Black -> night
 void applyBrightness() { lcd->setBrightness((uint8_t)(255 * constrain((int)cfg.bright, 5, 100) / 100)); }
 
 // Essentialsail font (anti-aliased) and the degree symbol in UTF-8
@@ -233,6 +256,50 @@ static bool i2cWrite(uint8_t addr, uint8_t reg, const uint8_t *buf, int n) {
   Wire.write(reg);
   for (int i = 0; i < n; i++) Wire.write(buf[i]);
   return Wire.endTransmission() == 0;
+}
+
+// ============================== IMU QMI8658C: raise the wrist to wake the screen ==============================
+// The accelerometer is read over the same I2C bus as the touch panel and the PMU. Pose "looking at the watch":
+// the screen faces up or down (z axis about +-1 g: works whichever way the sensor is mounted) and the watch is
+// still (total acceleration about 1 g) for 350 ms. The wake is edge triggered: after the screen went off the
+// watch must first leave that pose (arm lowered), so a watch lying face up on a table does not wake all the time.
+uint8_t imuAddr = 0;
+float imuG[3] = {0, 0, 0};
+bool imuArmed = false;
+bool imuInit() {
+  const uint8_t addrs[2] = {0x6B, 0x6A};
+  for (uint8_t a : addrs) {
+    uint8_t id = 0;
+    if (i2cRead(a, 0x00, &id, 1) && id == 0x05) {   // WHO_AM_I of the QMI8658
+      uint8_t v = 0x40; i2cWrite(a, 0x02, &v, 1);   // CTRL1: register address auto-increment
+      v = 0x17; i2cWrite(a, 0x03, &v, 1);            // CTRL2: accelerometer +-4 g, 62.5 Hz
+      v = 0x01; i2cWrite(a, 0x08, &v, 1);            // CTRL7: accelerometer on
+      imuAddr = a;
+      return true;
+    }
+  }
+  return false;
+}
+bool imuRead() {
+  uint8_t b[6];
+  if (!imuAddr || !i2cRead(imuAddr, 0x35, b, 6)) return false;
+  for (int i = 0; i < 3; i++) imuG[i] = (int16_t)(b[2 * i] | (b[2 * i + 1] << 8)) / 8192.0f;
+  return true;
+}
+// true once when the watch is raised to be looked at (call often while the screen is off)
+bool imuRaised() {
+  static uint32_t lastPoll = 0, steady = 0;
+  uint32_t now = millis();
+  if (now - lastPoll < 50 || !imuRead()) return false;
+  lastPoll = now;
+  float mag = sqrtf(imuG[0] * imuG[0] + imuG[1] * imuG[1] + imuG[2] * imuG[2]);
+  const float az = fabsf(imuG[2]);
+  if (az < 0.3f) imuArmed = true;   // arm lowered / screen not facing up: ready for the next raise
+  if (imuArmed && fabsf(mag - 1.0f) < 0.25f && az > 0.6f) {
+    if (!steady) steady = now;
+    else if (now - steady > 350) { imuArmed = false; steady = 0; return true; }
+  } else steady = 0;
+  return false;
 }
 
 struct Batt { bool ok = false, present = false, charging = false, vbus = false; int pct = -1, mv = 0; } batt;
@@ -821,6 +888,7 @@ int menuSel = 0;
 bool dirty = true;
 uint32_t lastRender = 0, lastSig = 0;
 bool screenOn = true;          // screen on (short PWR press = on/off)
+uint32_t lastActMs = 0;   // last touch / button / wake: the screen timeout counts from here
 bool alertActive = false;      // collision alarm in progress (not snoozed)
 bool riskNow = false;          // there is at least one boat on a collision course / very close
 bool shallowNow = false;       // depth below the alarm threshold
@@ -897,6 +965,7 @@ void roundRectBlend(int x, int y, int w, int h, int rtl, int rtr, int rbr, int r
   uint16_t *fb = cv->getFramebuffer();
   // at night the widgets are opaque (original look of the red theme)
   if (!fb || cfg.night) { roundRect4(x, y, w, h, rtl, rtr, rbr, rbl, col); return; }
+  if (cfg.theme == THEME_BLACK && alpha < 226) alpha = 226;   // Elegant Black: cards almost solid, like EssentialSail
   for (int yy = 0; yy < h; yy++) {
     int il = max(cornerInset(yy, rtl), cornerInset(h - 1 - yy, rbl));
     int ir = max(cornerInset(yy, rtr), cornerInset(h - 1 - yy, rbr));
@@ -950,19 +1019,20 @@ void drawBackdrop() {
   if (cfg.night) { cv->fillScreen(TH.bg); return; }   // night (red) theme: solid background, no gradients or transparency
   static uint16_t *cache = nullptr;
   static uint16_t kBg = 0, kPri = 0, kAcc = 0;
-  static int8_t kRot = -1;
+  static int8_t kRot = -1, kTheme = -1;
   const size_t bytes = (size_t)SCR_W * SCR_H * 2;
   uint16_t *fb = cv->getFramebuffer();
   if (!cache) cache = (uint16_t *)heap_caps_malloc(bytes, MALLOC_CAP_SPIRAM);
-  if (cache && fb && kRot == (int8_t)cfg.rot && kBg == TH.bg && kPri == TH.pri && kAcc == TH.acc) {
+  if (cache && fb && kRot == (int8_t)cfg.rot && kTheme == (int8_t)cfg.theme && kBg == TH.bg && kPri == TH.pri && kAcc == TH.acc) {
     memcpy(fb, cache, bytes);
     return;
   }
-  const uint16_t bot = mix565(TH.bg, TH.pri, 64);
+  const bool blk = cfg.theme == THEME_BLACK;   // Elegant Black: a much softer, warm tint
+  const uint16_t bot = mix565(TH.bg, TH.pri, blk ? 18 : 64);
   for (int y = 0; y < SCR_H; y++) cv->drawFastHLine(0, y, SCR_W, mix565(TH.bg, bot, y * 256 / SCR_H));
-  glow(340, 90, 190, TH.pri, 90);
-  glow(40, 430, 200, TH.acc, 80);
-  if (cache && fb) { memcpy(cache, fb, bytes); kRot = cfg.rot; kBg = TH.bg; kPri = TH.pri; kAcc = TH.acc; }
+  glow(340, 90, 190, TH.pri, blk ? 34 : 90);
+  glow(40, 430, 200, TH.acc, blk ? 26 : 80);
+  if (cache && fb) { memcpy(cache, fb, bytes); kRot = cfg.rot; kTheme = cfg.theme; kBg = TH.bg; kPri = TH.pri; kAcc = TH.acc; }
 }
 
 // Tile: label at the top, value centred, unit at the bottom right.
@@ -1443,9 +1513,10 @@ void drawHeader(const char *t) {
 }
 
 const char *MENU_LABELS[] = {"WiFi network", "WiFi password", "NMEA server IP", "Port", "Depth alarm",
-                             "Collision CPA", "Collision TCPA", "Language", "Diagnostics", "Save and restart", "Restart", "Factory reset",
+                             "Collision CPA", "Collision TCPA", "Language", "Theme", "Screen timeout", "Raise to wake", "Diagnostics", "Save and restart", "Restart", "Factory reset",
                              "Power off", "Exit without saving"};
-const int MENU_N = 14;
+const int MENU_N = 17;
+const uint16_t SLEEP_STEPS[] = {0, 15, 30, 60, 120, 300};   // "Screen timeout" menu item: seconds, 0 = never
 const int MENU_VIS = 11;   // rows that fit between the header and the hint above the keys
 int menuTop = 0;           // first row shown (the list scrolls with the selection)
 
@@ -1459,6 +1530,9 @@ String menuVal(int i) {
     case 5: return String(cfg.cpaNm, 2) + " nm";
     case 6: return String(cfg.tcpaMin, 0) + " min";
     case 7: return LANG_NAMES[cfg.lang];
+    case 8: return T(THEME_NAMES[cfg.theme]);
+    case 9: return cfg.sleepSec == 0 ? String(T("Never")) : (cfg.sleepSec < 60 ? String(cfg.sleepSec) + " s" : String(cfg.sleepSec / 60) + " min");
+    case 10: return imuAddr ? String(cfg.raise ? T("On") : T("Off")) : String("-");
     default: return "";
   }
 }
@@ -1596,7 +1670,7 @@ void drawFactory() {
   int y = 96;
   tAt(14, y, T("All settings will be erased:")); y += 32;
   tAt(26, y, T("boat WiFi, NMEA server, alarm,")); y += 24;
-  tAt(26, y, T("name, orientation, night mode,")); y += 24;
+  tAt(26, y, T("name, orientation, theme,")); y += 24;
   tAt(26, y, T("admin password (back to admin).")); y += 40;
   tAt(14, y, T("The device restarts in setup mode:")); y += 24;
   tAt(14, y, String(T("open WiFi")) + " '" SETUP_AP_NAME "'.");
@@ -1680,7 +1754,7 @@ uint32_t sig() {
   if (page == PAGE_AIS) h = (h ^ aisRev) * 16777619u;
   if (page == PAGE_BATT) h = (h ^ (uint32_t)(batt.pct + 200) ^ (uint32_t)(batt.mv / 10) ^ (batt.charging << 20) ^ (batt.vbus << 21) ^ ((uint32_t)cfg.bright << 24)) * 16777619u;
   if (page == 0) h = (h ^ (uint32_t)time(nullptr)) * 16777619u;   // the clock is redrawn every second
-  h = (h ^ (uint32_t)(srvUp ? 1 : 0) ^ (uint32_t)(page << 4) ^ (uint32_t)(mode << 6) ^ (uint32_t)(cfg.night << 9)) * 16777619u;
+  h = (h ^ (uint32_t)(srvUp ? 1 : 0) ^ (uint32_t)(page << 4) ^ (uint32_t)(mode << 6) ^ (uint32_t)(cfg.theme << 9)) * 16777619u;
   return h;
 }
 
@@ -1757,7 +1831,8 @@ void serialCmdLoop() {
       case 'P': powerOff(); break;
       case 'Y': if (cfg.vibPin >= 0) vibTest(); break;   // vibration test (4 s of pulses)
       case 'S': sendScreenPreview(); break;
-      case 'T': cfg.night = !cfg.night; applyTheme(); dirty = true; break;   // test: day/night theme without saving
+      case 'Z': screenSet(true); lastActMs = millis(); break;   // wake the screen (test)
+      case 'T': cycleTheme(); dirty = true; break;   // test: next theme without saving
       case 'H': cmd = "H"; break;
       case 'C': cmd = "C"; break;
       case 'N': cmd = "N"; break;
@@ -1814,12 +1889,13 @@ void doScan() {
 }
 
 void handleKeys(Ev eu, Ev ed, Ev eo, Ev eb) {
+  lastActMs = millis();
   switch (mode) {
     case M_DASH:
       if (eu == EV_SHORT) { page = (page + NUM_PAGES - 1) % NUM_PAGES; dirty = true; }
       if (ed == EV_SHORT) { page = (page + 1) % NUM_PAGES; dirty = true; }
       if (eo == EV_LONG) { mode = M_MENU; menuSel = menuTop = 0; dirty = true; }
-      if (eb == EV_SHORT) { cfg.night = !cfg.night; applyTheme(); saveCfg(); dirty = true; }
+      if (eb == EV_SHORT) { cycleTheme(); saveCfg(); dirty = true; }
       break;
     case M_MENU:
       if (eu) menuSel = (menuSel + MENU_N - 1) % MENU_N;
@@ -1840,12 +1916,21 @@ void handleKeys(Ev eu, Ev ed, Ev eo, Ev eb) {
             prefs.end();
             break;
           }
-          case 8: mode = M_DIAG; dirty = true; break;
-          case 9: saveCfg(); showMsg("Saved", "Restarting..."); delay(800); ESP.restart(); break;
-          case 10: showMsg("Restarting...", ""); delay(300); ESP.restart(); break;
-          case 11: mode = M_FACTORY; dirty = true; break;
-          case 12: powerOff(); break;
-          case 13: loadCfg(); applyTheme(); mode = M_DASH; dirty = true; break;
+          case 8: cycleTheme(); saveCfg(); break;   // theme: next one, applied and saved at once
+          case 9: {   // screen timeout: next step, saved at once
+            int k = 0;
+            for (int i = 0; i < 6; i++) if (SLEEP_STEPS[i] == cfg.sleepSec) k = i;
+            cfg.sleepSec = SLEEP_STEPS[(k + 1) % 6];
+            saveCfg();
+            break;
+          }
+          case 10: if (imuAddr) { cfg.raise = !cfg.raise; saveCfg(); } break;
+          case 11: mode = M_DIAG; dirty = true; break;
+          case 12: saveCfg(); showMsg("Saved", "Restarting..."); delay(800); ESP.restart(); break;
+          case 13: showMsg("Restarting...", ""); delay(300); ESP.restart(); break;
+          case 14: mode = M_FACTORY; dirty = true; break;
+          case 15: powerOff(); break;
+          case 16: loadCfg(); applyTheme(); mode = M_DASH; dirty = true; break;
         }
       }
       if (eb) { loadCfg(); applyTheme(); mode = M_DASH; dirty = true; }
@@ -1885,7 +1970,7 @@ void handleKeys(Ev eu, Ev ed, Ev eo, Ev eb) {
 }
 
 // ============================== Touch: gestures and keys ======================
-// On the dashboard: swipe = page, long press = menu, double tap = day/night theme.
+// On the dashboard: swipe = page, long press = menu, double tap = next theme (day, Elegant Black, night).
 // In the menus: the 4 virtual keys at the bottom (UP/DOWN repeat while held).
 void touchEvents(Ev &eu, Ev &ed, Ev &eo, Ev &eb) {
   eu = ed = eo = eb = EV_NONE;
@@ -1920,7 +2005,7 @@ void touchEvents(Ev &eu, Ev &ed, Ev &eo, Ev &eb) {
       int dx = tX - tX0;
       if (tMoved && abs(dx) >= SWIPE_MIN_PX && now - tDown <= SWIPE_MAX_MS) {
         if (dx < 0) ed = EV_SHORT; else eu = EV_SHORT;   // swipe left = next page
-      } else if (!tMoved && !tLongFired) {  // short tap: two in a row = day/night
+      } else if (!tMoved && !tLongFired) {  // short tap: two in a row = next theme
         if (lastTapT && now - lastTapT <= DOUBLE_TAP_MS && abs(tX0 - lastTapX) <= DOUBLE_TAP_PX &&
             abs(tY0 - lastTapY) <= DOUBLE_TAP_PX) {
           eb = EV_SHORT;
@@ -1950,8 +2035,8 @@ void touchEvents(Ev &eu, Ev &ed, Ev &eo, Ev &eb) {
 void screenSet(bool on) {
   if (on == screenOn) return;
   screenOn = on;
-  if (on) { lcd->displayOn(); applyBrightness(); dirty = true; }
-  else lcd->displayOff();
+  if (on) { lastActMs = millis(); lcd->displayOn(); applyBrightness(); dirty = true; }
+  else { imuArmed = false; lcd->displayOff(); }   // after sleeping, a raise needs the watch to be lowered first
 }
 bool snoozed() { return snoozeUntil && (int32_t)(snoozeUntil - millis()) > 0; }
 void showToast(const char *m, uint32_t ms = 3000) { toastMsg = T(m); toastUntil = millis() + ms; dirty = true; }
@@ -2082,6 +2167,7 @@ void setup() {
   pinMode(PWR_PIN, INPUT);
   if (cfg.vibPin >= 0) { pinMode(cfg.vibPin, OUTPUT); digitalWrite(cfg.vibPin, LOW); }
   pmuInit();
+  imuInit();
   pmuPoll();
   Serial.printf("PMU %s, battery %s %d%% %d mV\n", pmuOk ? "ok" : "NOT FOUND", batt.present ? "present" : "absent", batt.pct, batt.mv);
   time_t rt;
@@ -2100,6 +2186,7 @@ void setup() {
   if (!cfg.ssid.length()) mode = M_SETUP;  // first start: open network + instructions
   else if (!cfg.host.length() && !NMEA_WIRED) { mode = M_MENU; menuSel = 0; }
   render();
+  Serial.printf("IMU QMI8658: %s\n", imuAddr ? "found" : "not found");
   Serial.println("EssentialView S3 ready");
 }
 
@@ -2125,6 +2212,17 @@ void loop() {
   if (rtcDirty && millis() - lastRtcW >= 600000UL) { rtcDirty = false; lastRtcW = millis(); time_t tn = time(nullptr); if (clockValid()) rtcWrite(tn); }
 
   readTouch();
+  if (tTouching) lastActMs = millis();
+  // screen timeout: off after sleepSec without touch or buttons (never during an alarm; menus wait at least 2 minutes)
+  if (screenOn && cfg.sleepSec && !alertActive && mode != M_SETUP) {
+    uint32_t limit = (mode == M_DASH ? cfg.sleepSec : max<uint32_t>(cfg.sleepSec, 120)) * 1000UL;
+    if (millis() - lastActMs > limit) screenSet(false);
+  }
+  // raise to wake: poll the accelerometer fast while the screen is off, slowly while on (for the status page)
+  if (imuAddr) {
+    if (!screenOn) { if (cfg.raise && imuRaised()) screenSet(true); }
+    else { static uint32_t lastImu = 0; if (millis() - lastImu >= 500) { lastImu = millis(); imuRead(); } }
+  }
   static bool touchWake = false;
   Ev eu = EV_NONE, ed = EV_NONE, eo = EV_NONE, eb = EV_NONE;
   if (!screenOn) {                       // screen off: a touch switches it on again (and does nothing else)
