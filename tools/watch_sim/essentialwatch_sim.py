@@ -16,6 +16,7 @@ Headless:  python essentialwatch_sim.py --headless --scenario corsica --port 101
 Never use the simulated depth or positions for navigation.
 """
 import argparse
+import base64
 import hashlib
 import io
 import json
@@ -400,6 +401,106 @@ class WatchApi:
     def screen(self):
         return self.request("GET", "/screen.bmp?half=1", timeout=30, raw=True)
 
+# ============================== the real watch over USB (serial commands of the firmware) ==============================
+def rgb565_image(w, h, b64):
+    """Screen copy sent by the firmware: half size, RGB565 big-endian, base64."""
+    from PIL import Image
+    raw = base64.b64decode(b64)
+    out = bytearray(w * h * 3)
+    for n in range(min(w * h, len(raw) // 2)):
+        v = (raw[2 * n] << 8) | raw[2 * n + 1]
+        out[3 * n] = ((v >> 11) & 31) * 255 // 31
+        out[3 * n + 1] = ((v >> 5) & 63) * 255 // 63
+        out[3 * n + 2] = (v & 31) * 255 // 31
+    return Image.frombytes("RGB", (w, h), bytes(out))
+
+
+class SerialLink:
+    """USB serial link: commands go out, log lines, status and screen copies come back."""
+    B64 = re.compile(r"^[A-Za-z0-9+/=]+$")
+
+    def __init__(self, on_line):
+        self.on_line, self.ser, self.ok = on_line, None, False
+        self._wlock = threading.Lock()
+        self._st, self._st_evt = None, threading.Event()
+        self._img, self._img_evt = None, threading.Event()
+
+    def open(self, port):
+        import serial
+        s = serial.Serial()
+        s.port, s.baudrate, s.timeout = port, 115200, 0.2
+        s.dtr = s.rts = False   # try not to reset the board when the port opens
+        s.open()
+        self.ser, self.ok = s, True
+        threading.Thread(target=self._read, daemon=True).start()
+
+    def close(self):
+        self.ok = False
+        try:
+            self.ser.close()
+        except Exception:
+            pass
+
+    def send(self, text):
+        if not self.ok:
+            raise RuntimeError("USB not connected")
+        with self._wlock:
+            self.ser.write(text.encode())
+            self.ser.flush()
+
+    def _read(self):
+        buf, shot = b"", None
+        while self.ok:
+            try:
+                chunk = self.ser.read(4096)
+            except Exception as e:
+                self.ok = False
+                self.on_line(f"USB lost: {e}")
+                break
+            if not chunk:
+                continue
+            buf += chunk
+            while b"\n" in buf:
+                raw, buf = buf.split(b"\n", 1)
+                line = raw.decode("utf-8", "replace").strip()
+                if shot is not None:
+                    if line == "SCR565_END":
+                        try:
+                            self._img = rgb565_image(shot[0], shot[1], "".join(shot[2]))
+                            self._img_evt.set()
+                        except Exception as e:
+                            self.on_line(f"screen copy damaged: {e}")
+                        shot = None
+                    elif self.B64.match(line):
+                        shot[2].append(line)
+                    elif line:
+                        self.on_line(line)   # a log line in the middle of the copy
+                elif line.startswith("SCR565_BEGIN"):
+                    _, w, h = line.split()
+                    shot = [int(w), int(h), []]
+                elif line.startswith("STATUS "):
+                    try:
+                        self._st = json.loads(line[7:])
+                        self._st_evt.set()
+                    except ValueError:
+                        pass
+                elif line:
+                    self.on_line(line)
+
+    def status(self):
+        self._st_evt.clear()
+        self.send("CSTATUS\n")
+        if not self._st_evt.wait(4):
+            raise TimeoutError("no answer over USB (the watch may be restarting: wait ~20 s)")
+        return self._st
+
+    def screen(self):
+        self._img_evt.clear()
+        self.send("S")
+        if not self._img_evt.wait(20):
+            raise TimeoutError("no screen copy over USB")
+        return self._img
+
 # ============================== window ==============================
 def local_ip():
     try:
@@ -423,8 +524,14 @@ def run_gui(args):
     sim = Sim()
     root = tk.Tk()
     root.title("EssentialWatch Simulator")
-    root.geometry("1040x700")
+    root.geometry("1100x780")
     logbox = tk.Text(root, height=6, state="disabled", font=("Consolas", 9))
+    logbox.pack(side="bottom", fill="x")
+    nb = ttk.Notebook(root)
+    nb.pack(fill="both", expand=True)
+    tab_sim, tab_tools = ttk.Frame(nb), ttk.Frame(nb)
+    nb.add(tab_sim, text="  Simulator  ")
+    nb.add(tab_tools, text="  Tools  ")
 
     def log(s):
         def w():
@@ -439,7 +546,7 @@ def run_gui(args):
     pad = dict(padx=6, pady=3)
 
     # ---- left column: boat and scenario ----
-    left = ttk.Frame(root)
+    left = ttk.Frame(tab_sim)
     left.pack(side="left", fill="y", padx=8, pady=8)
 
     con = ttk.LabelFrame(left, text="NMEA server")
@@ -531,7 +638,7 @@ def run_gui(args):
     ttk.Checkbutton(act, text="Signal lost (send nothing)", variable=mute_v, command=set_mute).pack(anchor="w", **pad)
 
     # ---- right column: targets, watch ----
-    right = ttk.Frame(root)
+    right = ttk.Frame(tab_sim)
     right.pack(side="left", fill="both", expand=True, padx=8, pady=8)
 
     tg = ttk.LabelFrame(right, text="AIS targets (red = the watch shows them in red)")
@@ -546,79 +653,253 @@ def run_gui(args):
     own_lbl = ttk.Label(right, text="")
     own_lbl.pack(anchor="w", **pad)
 
-    wt = ttk.LabelFrame(right, text="The watch")
-    wt.pack(fill="both", expand=True, pady=6)
-    top = ttk.Frame(wt)
-    top.pack(fill="x")
-    host_v, pw_v = tk.StringVar(), tk.StringVar()
-    ttk.Label(top, text="IP").pack(side="left", **pad)
-    ttk.Entry(top, textvariable=host_v, width=16).pack(side="left")
-    ttk.Label(top, text="admin password").pack(side="left", **pad)
-    ttk.Entry(top, textvariable=pw_v, show="*", width=14).pack(side="left")
-    st_lbl = ttk.Label(wt, text="the IP appears when the watch connects to this server")
-    st_lbl.pack(anchor="w", **pad)
-    keys = ttk.Frame(wt)
-    keys.pack(fill="x")
-    busy = {"n": False}
+    # ---------------- Tools tab: link to the real watch (network or USB), its address, screen mirror, console ----------------
+    mode_v, host_v, pw_v = tk.StringVar(value="net"), tk.StringVar(), tk.StringVar()
+    live_v, busy, dev = tk.BooleanVar(value=True), {"n": False}, {"link": None, "img": None, "ip": ""}
+    try:
+        from serial.tools import list_ports
+    except ImportError:
+        list_ports = None
 
-    def call(fn, done=None):
-        api.host, api.password = host_v.get().strip(), pw_v.get()
-        if not api.host:
-            st_lbl.config(text="no watch IP yet")
-            return
+    def console(s):
+        def w():
+            con_box.config(state="normal")
+            con_box.insert("end", s + "\n")
+            if int(con_box.index("end-1c").split(".")[0]) > 600:
+                con_box.delete("1.0", "100.0")
+            con_box.see("end")
+            con_box.config(state="disabled")
+        root.after(0, w)
 
+    def bg(fn, done):
         def run():
             try:
                 r, e = fn(), None
             except Exception as ex:
                 r, e = None, ex
-            root.after(0, lambda: (done(r, e) if done else (st_lbl.config(text=str(e)) if e else None)))
+            root.after(0, lambda: done(r, e))
         threading.Thread(target=run, daemon=True).start()
 
-    for label, k in (("Right", "right"), ("Left", "left"), ("Double Tap", "dtap"), ("Power", "power"), ("Boot (snooze)", "boot"), ("Test vibration", "vibtest")):
-        ttk.Button(keys, text=label, command=lambda k=k: call(lambda: api.key(k))).pack(side="left", padx=3, pady=3)
-    ttk.Button(keys, text="Open web page", command=lambda: __import__("webbrowser").open(f"http://{host_v.get().strip()}/")).pack(side="right", padx=3)
-    img_lbl = tk.Label(wt, text="live screen copy needs Pillow (pip install pillow)" if not Image else "", bg="#101820", fg="#ccc")
-    img_lbl.pack(pady=4)
-    live_v = tk.BooleanVar(value=True)
-    ttk.Checkbutton(wt, text="Live screen copy (every 2 s)", variable=live_v).pack(anchor="w", **pad)
+    def usb_link():
+        ln = dev["link"]
+        if not ln or not ln.ok:
+            raise RuntimeError("USB not connected: choose the port and press Connect")
+        return ln
 
-    def poll_watch():
-        if live_v.get() and host_v.get().strip() and not busy["n"]:
+    def dev_status():
+        if mode_v.get() == "usb":
+            return usb_link().status()
+        api.host, api.password = host_v.get().strip(), pw_v.get()
+        if not api.host:
+            raise RuntimeError("no watch IP yet")
+        return api.status()
+
+    def dev_screen():
+        if mode_v.get() == "usb":
+            return usb_link().screen()
+        api.host, api.password = host_v.get().strip(), pw_v.get()
+        img = Image.open(io.BytesIO(api.screen()))
+        img.load()
+        return img
+
+    USB_KEYS = {"right": "U", "left": "D", "dtap": "B", "power": "P"}
+
+    def dev_key(k):
+        if mode_v.get() == "usb":
+            if k not in USB_KEYS:
+                raise RuntimeError(f"'{k}' works only over the network")
+            usb_link().send(USB_KEYS[k])
+            return
+        api.host, api.password = host_v.get().strip(), pw_v.get()
+        api.key(k)
+
+    # 1. connection
+    conn = ttk.LabelFrame(tab_tools, text="1. Connection to the watch")
+    conn.pack(fill="x", padx=8, pady=(8, 4))
+    r1 = ttk.Frame(conn)
+    r1.pack(fill="x")
+    net_row, usb_row = ttk.Frame(conn), ttk.Frame(conn)
+
+    def show_mode():
+        net_row.pack_forget()
+        usb_row.pack_forget()
+        (usb_row if mode_v.get() == "usb" else net_row).pack(fill="x")
+        mirror_poll(now=True)
+    ttk.Radiobutton(r1, text="Network (Wi-Fi)", variable=mode_v, value="net", command=show_mode).pack(side="left", **pad)
+    ttk.Radiobutton(r1, text="USB cable", variable=mode_v, value="usb", command=show_mode).pack(side="left", **pad)
+    ttk.Label(net_row, text="Watch IP").pack(side="left", **pad)
+    ttk.Entry(net_row, textvariable=host_v, width=16).pack(side="left")
+    ttk.Label(net_row, text="admin password").pack(side="left", **pad)
+    ttk.Entry(net_row, textvariable=pw_v, show="*", width=14).pack(side="left")
+    ttk.Label(net_row, text="(the IP fills in by itself when the watch connects to the NMEA server)", foreground="#4E6D83").pack(side="left", **pad)
+    ttk.Label(usb_row, text="Port").pack(side="left", **pad)
+    port_sel = ttk.Combobox(usb_row, width=44, state="readonly")
+    port_sel.pack(side="left")
+
+    def refresh_ports():
+        if not list_ports:
+            port_sel["values"] = ["pyserial missing: pip install pyserial"]
+            port_sel.current(0)
+            return
+        ps = sorted(list_ports.comports(), key=lambda p: (p.vid != 0x303A, p.device))   # Espressif first
+        port_sel["values"] = [f"{p.device} - {p.description}" for p in ps] or ["no serial port found"]
+        port_sel.current(0)
+    usb_btn = ttk.Button(usb_row, text="Connect", width=12)
+
+    def usb_toggle():
+        ln = dev["link"]
+        if ln and ln.ok:
+            ln.close()
+            dev["link"] = None
+            usb_btn.config(text="Connect")
+            console("USB closed")
+            return
+        if not list_ports or " - " not in port_sel.get():
+            console("USB: no port selected")
+            return
+        ln = SerialLink(console)
+        try:
+            ln.open(port_sel.get().split(" - ")[0])
+        except Exception as e:
+            console(f"USB: cannot open the port: {e}")
+            return
+        dev["link"] = ln
+        usb_btn.config(text="Disconnect")
+        console("USB open (if the watch restarts, wait ~20 s)")
+        mirror_poll(now=True)
+    usb_btn.config(command=usb_toggle)
+    ttk.Button(usb_row, text="Refresh", command=refresh_ports).pack(side="left", **pad)
+    usb_btn.pack(side="left", **pad)
+    refresh_ports()
+
+    # 2. device address
+    inf = ttk.LabelFrame(tab_tools, text="2. Device address")
+    inf.pack(fill="x", padx=8, pady=4)
+    addr_lbl = tk.Label(inf, text="-", font=("Segoe UI", 18, "bold"), anchor="w")
+    addr_lbl.pack(fill="x", padx=8, pady=(4, 0))
+    det_lbl = ttk.Label(inf, text="not connected", justify="left")
+    det_lbl.pack(anchor="w", padx=8, pady=2)
+    ib = ttk.Frame(inf)
+    ib.pack(fill="x")
+
+    def copy_addr():
+        if dev["ip"]:
+            root.clipboard_clear()
+            root.clipboard_append(dev["ip"])
+            console(f"copied {dev['ip']}")
+
+    def use_net():
+        if dev["ip"]:
+            host_v.set(dev["ip"])
+            mode_v.set("net")
+            show_mode()
+
+    def point_here():
+        try:
+            usb_link().send(f"H{local_ip()}:{port_v.get()}\n")
+            console(f"told the watch to read NMEA from {local_ip()}:{port_v.get()} (until it restarts)")
+        except Exception as e:
+            console(str(e))
+    ttk.Button(ib, text="Copy address", command=copy_addr).pack(side="left", **pad)
+    ttk.Button(ib, text="Use it for the network connection", command=use_net).pack(side="left", **pad)
+    ttk.Button(ib, text="Open its web page", command=lambda: dev["ip"] and __import__("webbrowser").open(f"http://{dev['ip']}/")).pack(side="left", **pad)
+    ttk.Button(ib, text="Point the watch at this simulator (USB)", command=point_here).pack(side="left", **pad)
+
+    # 3. screen mirror + output
+    low = ttk.Frame(tab_tools)
+    low.pack(fill="both", expand=True, padx=8, pady=4)
+    mir = ttk.LabelFrame(low, text="3. Screen of the watch")
+    mir.pack(side="left", fill="y")
+    img_lbl = tk.Label(mir, text="live screen copy needs Pillow (pip install pillow)" if not Image else "no image yet", bg="#101820", fg="#ccc", width=34, height=18)
+    img_lbl.pack(padx=6, pady=6)
+    mb = ttk.Frame(mir)
+    mb.pack(fill="x")
+    ttk.Checkbutton(mb, text="Live", variable=live_v).pack(side="left", **pad)
+
+    def save_shot():
+        if not dev["img"]:
+            return
+        from tkinter import filedialog
+        f = filedialog.asksaveasfilename(defaultextension=".png", initialfile="watch_" + time.strftime("%Y%m%d_%H%M%S") + ".png")
+        if f:
+            dev["img"].save(f)
+            console(f"saved {f}")
+    ttk.Button(mb, text="Save PNG", command=save_shot).pack(side="left", **pad)
+    kb = ttk.Frame(mir)
+    kb.pack(fill="x")
+    for i, (label, k) in enumerate((("Right", "right"), ("Left", "left"), ("Double tap", "dtap"), ("Power", "power"), ("Snooze", "boot"), ("Vib. test", "vibtest"))):
+        ttk.Button(kb, text=label, width=9, command=lambda k=k: bg(lambda: dev_key(k), lambda r, e: e and console(f"key {k}: {e}"))).grid(row=i // 3, column=i % 3, padx=2, pady=2)
+
+    out = ttk.LabelFrame(low, text="Output of the watch (USB log) and commands")
+    out.pack(side="left", fill="both", expand=True, padx=(8, 0))
+    con_box = tk.Text(out, height=10, state="disabled", font=("Consolas", 9), bg="#101820", fg="#B8D8E8")
+    con_box.pack(fill="both", expand=True, padx=4, pady=4)
+    cmd_v = tk.StringVar()
+    cr = ttk.Frame(out)
+    cr.pack(fill="x")
+    cmd_e = ttk.Entry(cr, textvariable=cmd_v)
+    cmd_e.pack(side="left", fill="x", expand=True, padx=4, pady=4)
+
+    def send_cmd(_=None):
+        c = cmd_v.get().strip()
+        if not c:
+            return
+        try:
+            usb_link().send(c + "\n")
+            console("> " + c)
+            cmd_v.set("")
+        except Exception as e:
+            console(str(e))
+    cmd_e.bind("<Return>", send_cmd)
+    ttk.Button(cr, text="Send", command=send_cmd).pack(side="left", padx=4)
+    ttk.Label(out, text="USB commands: CSTATUS, CGET, S (screen), U D O L B K (buttons), H<ip>:<port> (NMEA server)", foreground="#4E6D83").pack(anchor="w", padx=4)
+
+    def show_result(s, img):
+        ip = s.get("ip") or ""
+        ap = s.get("ap_ip") or ""
+        dev["ip"] = ip or ap
+        addr_lbl.config(text=ip or (f"{ap}  (its own Wi-Fi \"{s.get('ap')}\")" if ap else "not on Wi-Fi"))
+        d = [f"{s.get('name', '')}  fw {s.get('fw')}", f"Wi-Fi: {s.get('wifi')}" + (f"  \"{s.get('ssid')}\"  {s.get('rssi')} dBm" if ip else ""),
+             f"NMEA server: {s.get('host')}:{s.get('port')}  " + ("connected" if s.get("server") else "NOT connected"),
+             f"battery {s.get('batt', '--')}%" + (" charging" if s.get("chg") else "")]
+        if s.get("alert"):
+            d.append("ALARM")
+        elif s.get("snooze"):
+            d.append(f"snoozed {s['snooze']} s")
+        if s.get("vib", -1) >= 0:
+            d.append(f"vibration GPIO {s['vib']}" + (" ON" if s.get("vibon") else ""))
+        det_lbl.config(text="\n".join(d))
+        if ip and not host_v.get():
+            host_v.set(ip)
+        if img is not None and Image:
+            dev["img"] = img
+            w, h = img.size
+            ph = ImageTk.PhotoImage(img.resize((int(w * 1.5), int(h * 1.5))))
+            img_lbl.config(image=ph, text="", width=ph.width(), height=ph.height())
+            img_lbl.image = ph
+
+    def mirror_poll(now=False):
+        if mirror_poll.job:
+            root.after_cancel(mirror_poll.job)
+        usb = mode_v.get() == "usb"
+        ready = (dev["link"] is not None and dev["link"].ok) if usb else bool(host_v.get().strip())
+        if (now or live_v.get()) and ready and not busy["n"]:
             busy["n"] = True
 
-            def run():
-                s = img = err = None
-                try:
-                    api.host, api.password = host_v.get().strip(), pw_v.get()
-                    s = api.status()
-                    if Image:
-                        img = Image.open(io.BytesIO(api.screen()))
-                        img.load()
-                except Exception as ex:
-                    err = ex
+            def work():
+                s = dev_status()
+                return s, (dev_screen() if Image else None)
 
-                def done():
-                    busy["n"] = False
-                    if err:
-                        st_lbl.config(text=f"watch: {err}")
-                        return
-                    bits_ = [f"fw {s.get('fw')}", f"battery {s.get('batt', '--')}%" + (" charging" if s.get("chg") else ""),
-                             f"NMEA {'connected' if s.get('server') else 'NOT connected'}"]
-                    if s.get("alert"):
-                        bits_.append("ALARM")
-                    elif s.get("snooze"):
-                        bits_.append(f"snoozed {s['snooze']} s")
-                    if s.get("vib", -1) >= 0:
-                        bits_.append(f"vibration GPIO {s['vib']}" + (" ON" if s.get("vibon") else ""))
-                    st_lbl.config(text=" | ".join(bits_))
-                    if img:
-                        ph = ImageTk.PhotoImage(img)
-                        img_lbl.config(image=ph, text="")
-                        img_lbl.image = ph
-                root.after(0, done)
-            threading.Thread(target=run, daemon=True).start()
-        root.after(2000, poll_watch)
+            def done(r, e):
+                busy["n"] = False
+                if e:
+                    det_lbl.config(text=f"{e}")
+                else:
+                    show_result(*r)
+            bg(work, done)
+        mirror_poll.job = root.after(3500 if usb else 2000, mirror_poll)
+    mirror_poll.job = None
+    show_mode()
 
     def tick():
         with sim.lock:
@@ -643,9 +924,7 @@ def run_gui(args):
             srv_info.config(text="running, no client" if server.running else "stopped")
         root.after(1000, tick)
 
-    logbox.pack(side="bottom", fill="x")
     tick()
-    poll_watch()
     if args.scenario:
         scn_v.set(SCEN[args.scenario].title)
         pick()

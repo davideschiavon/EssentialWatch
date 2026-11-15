@@ -22,3 +22,11 @@ signal lost. The AIS table shows distance, bearing, CPA and TCPA, in red the tar
 Watch buttons: Right, Left, Double Tap, Power, Boot, Test vibration; the admin password of the watch is needed (HTTP Digest login).
 
 The scenarios are inspired by the EssentialSail simulator and written from scratch. Depth and positions are invented: never use them for navigation.
+
+## Tools tab
+
+The second tab talks to the real watch:
+
+1. **Connection** - over the network (watch IP + admin password, Digest login) or over the USB cable (pick the COM port and press Connect; needs `pip install pyserial`).
+2. **Device address** - the Wi-Fi IP of the watch (read over USB too, so you can find it with the cable and then switch to the network), signal, NMEA server, battery. Buttons: copy the address, use it for the network connection, open its web page, and (USB) point the watch at this simulator.
+3. **Screen of the watch** - live mirror (needs Pillow), PNG save, the same buttons as the watch (right, left, double tap, power; snooze and vibration test only over the network), and the USB log with a command line (`CSTATUS`, `CGET`, `S`, `U D O L B K`, `H<ip>:<port>`).
