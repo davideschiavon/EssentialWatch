@@ -15,7 +15,7 @@ Headless: `python essentialwatch_sim.py --headless --scenario corsica --port 101
 | Strong wind and drift | 40 kn gusting 50, the wind turns round in 8 minutes, the boat yaws |
 | Drill: collision | a collision course (CPA 0, TCPA 8 min) every 90 s: flashing frame, AIS page, BOOT snooze |
 | Drill: shallow water | depth 8 m to 1 m and back every 2 minutes |
-| Drill: signal lost | data 25 s, silence 20 s: the "SEGNALE PERSO" watermark |
+| Drill: signal lost | data 25 s, silence 20 s: the "SIGNAL LOST" watermark |
 
 Controls: wind direction / speed, depth (or from the scenario), collision target now, harmless target, remove targets,
 signal lost. The AIS table shows distance, bearing, CPA and TCPA, in red the targets the watch shows in red.
@@ -34,3 +34,7 @@ The second tab talks to the real watch:
 The Tools tab remembers the watch IP and the admin password (plain text in `~/.essentialwatch_sim.json`).
 
 The NMEA server starts by itself when the window opens (use `--no-autostart` to disable it); the watch reconnects without pressing Start.
+
+## Languages
+
+The window is in English, French or Spanish: choose it top right (the Windows display language is used the first time; the choice is remembered). Scenario names and descriptions, buttons, messages and the Tools tab change at once. `--tab tools` opens the Tools tab at launch.

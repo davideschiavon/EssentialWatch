@@ -133,7 +133,7 @@ SCENARIOS = [
              "The depth ramps from 8 m down to 1 m and back every 2 minutes: minimum depth alarm, SOG / depth page.",
              43.4800, 4.1500, 60, 5.0, 150, 12, lambda t: 4.5 + 3.5 * math.cos(2 * math.pi * t / 120.0), gust=2, boats=[]),
     Scenario("signal", "Drill: signal lost",
-             "Data for 25 s, then silence for 20 s: the orange SEGNALE PERSO watermark appears and goes away again.",
+             "Data for 25 s, then silence for 20 s: the orange SIGNAL LOST watermark appears and goes away again.",
              42.5000, 7.0000, 120, 6.0, 20, 15, lambda t: 25.0, gust=2,
              boats=[("SEA BREEZE", "B", 60, 1.0, 0, 0.0)], signal_cycle=(25, 20)),
 ]
@@ -548,6 +548,166 @@ def local_ip():
         return "127.0.0.1"
 
 
+# ============================== languages (English, French, Spanish) ==============================
+# tr("key") returns the text in the language chosen in the window (top right, remembered in the settings file).
+LANGS = (("en", "English"), ("fr", "Français"), ("es", "Español"))
+TX = {
+    "title": ("EssentialWatch Simulator", "Simulateur EssentialWatch", "Simulador EssentialWatch"),
+    "tab_sim": ("  Simulator  ", "  Simulateur  ", "  Simulador  "),
+    "tab_tools": ("  Tools  ", "  Outils  ", "  Herramientas  "),
+    "lang": ("Language", "Langue", "Idioma"),
+    # --- simulator tab ---
+    "srv_box": ("NMEA server", "Serveur NMEA", "Servidor NMEA"),
+    "this_pc": ("This PC: {0}", "Ce PC : {0}", "Este PC: {0}"),
+    "port": ("Port", "Port", "Puerto"),
+    "start": ("Start", "Démarrer", "Iniciar"),
+    "stop": ("Stop", "Arrêter", "Detener"),
+    "stopped": ("stopped", "arrêté", "detenido"),
+    "running_no_client": ("running, no client", "en marche, aucun client", "en marcha, sin cliente"),
+    "watch_connected": ("watch connected: {0}", "montre connectée : {0}", "reloj conectado: {0}"),
+    "scenario": ("Scenario", "Scénario", "Escenario"),
+    "boat": ("Boat", "Bateau", "Barco"),
+    "wind_from": ("Wind from (deg)", "Vent de (deg)", "Viento de (deg)"),
+    "wind_speed": ("Wind speed (kn)", "Vitesse du vent (nd)", "Velocidad del viento (nudos)"),
+    "depth_m": ("Depth (m)", "Profondeur (m)", "Profundidad (m)"),
+    "depth_auto": ("Depth from the scenario", "Profondeur du scénario", "Profundidad del escenario"),
+    "traffic": ("Traffic and signal", "Trafic et signal", "Tráfico y señal"),
+    "btn_collision": ("Collision course now", "Route de collision maintenant", "Rumbo de colisión ahora"),
+    "btn_harmless": ("Add a harmless target", "Ajouter une cible sans danger", "Añadir un blanco sin peligro"),
+    "btn_clear": ("Remove all targets", "Supprimer toutes les cibles", "Quitar todos los blancos"),
+    "chk_mute": ("Signal lost (send nothing)", "Signal perdu (ne rien envoyer)", "Señal perdida (no enviar nada)"),
+    "targets": ("AIS targets (red = the watch shows them in red)", "Cibles AIS (rouge = la montre les affiche en rouge)",
+                "Blancos AIS (rojo = el reloj los muestra en rojo)"),
+    "col_name": ("NAME", "NOM", "NOMBRE"), "col_mmsi": ("MMSI", "MMSI", "MMSI"), "col_dist": ("DIST", "DIST", "DIST"),
+    "col_brg": ("BRG", "GISEMENT", "DEMORA"), "col_cpa": ("CPA", "CPA", "CPA"), "col_tcpa": ("TCPA", "TCPA", "TCPA"),
+    "mmsi_only": ("(MMSI only)", "(MMSI seul)", "(solo MMSI)"),
+    "depth": ("depth", "profondeur", "profundidad"),
+    "signal_lost_tag": ("   [SIGNAL LOST]", "   [SIGNAL PERDU]", "   [SEÑAL PERDIDA]"),
+    # --- log ---
+    "log_stopped": ("server stopped", "serveur arrêté", "servidor detenido"),
+    "log_busy": ("cannot start: port {0} is already used (another simulator still open?)",
+                 "démarrage impossible : le port {0} est déjà utilisé (un autre simulateur est-il ouvert ?)",
+                 "no se puede iniciar: el puerto {0} ya está en uso (¿otro simulador abierto?)"),
+    "log_cannot": ("cannot start: {0}", "démarrage impossible : {0}", "no se puede iniciar: {0}"),
+    "log_server_on": ("server on {0}:{1}", "serveur sur {0}:{1}", "servidor en {0}:{1}"),
+    "log_scenario": ("scenario: {0}", "scénario : {0}", "escenario: {0}"),
+    "log_collision": ("collision target added", "cible de collision ajoutée", "blanco de colisión añadido"),
+    "log_mute": ("signal lost: no data sent", "signal perdu : aucune donnée envoyée", "señal perdida: no se envían datos"),
+    "log_unmute": ("signal back", "signal rétabli", "señal restablecida"),
+    # --- tools tab ---
+    "t_conn": ("1. Connection to the watch", "1. Connexion à la montre", "1. Conexión con el reloj"),
+    "t_net": ("Network (Wi-Fi)", "Réseau (Wi-Fi)", "Red (Wi-Fi)"),
+    "t_usb": ("USB cable", "Câble USB", "Cable USB"),
+    "t_ip": ("Watch IP", "IP de la montre", "IP del reloj"),
+    "t_pw": ("admin password", "mot de passe admin", "contraseña admin"),
+    "t_ip_hint": ("(the IP fills in by itself when the watch connects to the NMEA server)",
+                  "(l'IP se remplit seule quand la montre se connecte au serveur NMEA)",
+                  "(la IP se rellena sola cuando el reloj se conecta al servidor NMEA)"),
+    "t_port": ("Port", "Port", "Puerto"),
+    "t_refresh": ("Refresh", "Actualiser", "Actualizar"),
+    "t_connect": ("Connect", "Connecter", "Conectar"),
+    "t_disconnect": ("Disconnect", "Déconnecter", "Desconectar"),
+    "t_nopyserial": ("pyserial missing: pip install pyserial", "pyserial manquant : pip install pyserial", "falta pyserial: pip install pyserial"),
+    "t_noport": ("no serial port found", "aucun port série trouvé", "no se encontró ningún puerto serie"),
+    "t_addr": ("2. Device address", "2. Adresse de l'appareil", "2. Dirección del dispositivo"),
+    "t_notconn": ("not connected", "non connecté", "no conectado"),
+    "t_copy": ("Copy address", "Copier l'adresse", "Copiar dirección"),
+    "t_usenet": ("Use it for the network connection", "L'utiliser pour la connexion réseau", "Usarla para la conexión de red"),
+    "t_web": ("Open its web page", "Ouvrir sa page web", "Abrir su página web"),
+    "t_point": ("Point the watch at this simulator (USB)", "Pointer la montre vers ce simulateur (USB)", "Apuntar el reloj a este simulador (USB)"),
+    "t_screen": ("3. Screen of the watch", "3. Écran de la montre", "3. Pantalla del reloj"),
+    "t_pillow": ("live screen copy needs Pillow (pip install pillow)", "la copie d'écran demande Pillow (pip install pillow)",
+                 "la copia de pantalla necesita Pillow (pip install pillow)"),
+    "t_noimg": ("no image yet", "pas encore d'image", "aún no hay imagen"),
+    "t_live": ("Live (while this tab is open)", "En direct (tant que cet onglet est ouvert)", "En vivo (mientras esta pestaña está abierta)"),
+    "t_save": ("Save PNG", "Enregistrer PNG", "Guardar PNG"),
+    "k_right": ("Right", "Droite", "Derecha"), "k_left": ("Left", "Gauche", "Izquierda"),
+    "k_dtap": ("Double tap", "Double tap", "Doble toque"), "k_power": ("Power", "Power", "Power"),
+    "k_boot": ("Snooze", "Pause", "Pausa"), "k_vibtest": ("Vib. test", "Test vib.", "Prueba vib."),
+    "t_out": ("Output of the watch (USB log) and commands", "Sortie de la montre (journal USB) et commandes",
+              "Salida del reloj (registro USB) y comandos"),
+    "t_send": ("Send", "Envoyer", "Enviar"),
+    "t_cmds": ("USB commands: CSTATUS, CGET, S (screen), U D O L B K (buttons), H<ip>:<port> (NMEA server)",
+               "Commandes USB : CSTATUS, CGET, S (écran), U D O L B K (boutons), H<ip>:<port> (serveur NMEA)",
+               "Comandos USB: CSTATUS, CGET, S (pantalla), U D O L B K (botones), H<ip>:<puerto> (servidor NMEA)"),
+    # --- tools messages ---
+    "m_usb_not": ("USB not connected: choose the port and press Connect", "USB non connecté : choisissez le port et appuyez sur Connecter",
+                  "USB no conectado: elija el puerto y pulse Conectar"),
+    "m_noip": ("no watch IP yet", "pas encore d'IP de la montre", "aún no hay IP del reloj"),
+    "m_netonly": ("'{0}' works only over the network", "« {0} » ne fonctionne que par le réseau", "«{0}» solo funciona por la red"),
+    "m_usb_closed": ("USB closed", "USB fermé", "USB cerrado"),
+    "m_usb_nosel": ("USB: no port selected", "USB : aucun port choisi", "USB: ningún puerto elegido"),
+    "m_usb_fail": ("USB: cannot open the port: {0}", "USB : impossible d'ouvrir le port : {0}", "USB: no se puede abrir el puerto: {0}"),
+    "m_usb_open": ("USB open (if the watch restarts, wait ~20 s)", "USB ouvert (si la montre redémarre, attendez ~20 s)",
+                   "USB abierto (si el reloj se reinicia, espere ~20 s)"),
+    "m_copied": ("copied {0}", "copié {0}", "copiado {0}"),
+    "m_pointed": ("told the watch to read NMEA from {0}:{1} (until it restarts)",
+                  "la montre lira le NMEA sur {0}:{1} (jusqu'à son redémarrage)",
+                  "el reloj leerá NMEA de {0}:{1} (hasta que se reinicie)"),
+    "m_saved": ("saved {0}", "enregistré {0}", "guardado {0}"),
+    "m_key": ("key {0}: {1}", "touche {0} : {1}", "tecla {0}: {1}"),
+    "m_nowifi": ("not on Wi-Fi", "pas sur le Wi-Fi", "sin Wi-Fi"),
+    "m_apaddr": ("{0}  (its own Wi-Fi \"{1}\")", "{0}  (son propre Wi-Fi « {1} »)", "{0}  (su propio Wi-Fi «{1}»)"),
+    "m_nmea": ("NMEA server: {0}:{1}  {2}", "Serveur NMEA : {0}:{1}  {2}", "Servidor NMEA: {0}:{1}  {2}"),
+    "m_connected": ("connected", "connecté", "conectado"),
+    "m_notconnected": ("NOT connected", "NON connecté", "NO conectado"),
+    "m_battery": ("battery {0}%", "batterie {0} %", "batería {0}%"),
+    "m_charging": (" charging", " en charge", " cargando"),
+    "m_alarm": ("ALARM", "ALARME", "ALARMA"),
+    "m_snoozed": ("snoozed {0} s", "en pause {0} s", "en pausa {0} s"),
+    "m_vibration": ("vibration GPIO {0}", "vibration GPIO {0}", "vibración GPIO {0}"),
+    "m_on": (" ON", " ACTIVE", " ACTIVA"),
+    "m_screen_off": ("screen off", "écran éteint", "pantalla apagada"),
+    # --- scenarios ---
+    "s_cadaques": ("Cadaques coastal", "Côte de Cadaqués", "Costa de Cadaqués"),
+    "d_cadaques": ("0.3 nm off Cap de Creus, Tramontana 28 kn from the north, steep seabed (18-40 m), four vessels around.",
+                   "À 0,3 nm du cap de Creus, tramontane de 28 nœuds du nord, fonds qui chutent (18-40 m), quatre navires autour.",
+                   "A 0,3 nm del cabo de Creus, tramontana de 28 nudos del norte, fondo empinado (18-40 m), cuatro barcos alrededor."),
+    "s_corsica": ("12 nm off Corsica", "À 12 nm de la Corse", "A 12 nm de Córcega"),
+    "d_corsica": ("Mistral 22 kn, deep water, vessels at different distances; every 150 s one comes close on a collision course.",
+                  "Mistral 22 nœuds, eau profonde, navires à différentes distances ; toutes les 150 s l'un d'eux approche en route de collision.",
+                  "Mistral de 22 nudos, aguas profundas, barcos a distintas distancias; cada 150 s uno se acerca en rumbo de colisión."),
+    "s_espiguette": ("L'Espiguette shallow shelf", "Plateau peu profond de l'Espiguette", "Banco poco profundo de L'Espiguette"),
+    "d_espiguette": ("About 450 m off the beach, a sandy shelf from 5 m down to 1.3 m: the depth alarm triggers below the minimum depth.",
+                     "À environ 450 m de la plage, un banc de sable de 5 m à 1,3 m : l'alarme de profondeur se déclenche sous le minimum.",
+                     "A unos 450 m de la playa, un banco de arena de 5 m a 1,3 m: la alarma de profundidad salta por debajo del mínimo."),
+    "s_storm": ("Strong wind and drift", "Vent fort et dérive", "Viento fuerte y deriva"),
+    "d_storm": ("40 kn gusting 50, the wind goes round all directions in 8 minutes, the boat yaws and drifts.",
+                "40 nœuds avec rafales à 50, le vent fait le tour de l'horizon en 8 minutes, le bateau embarde et dérive.",
+                "40 nudos con rachas de 50, el viento da la vuelta al horizonte en 8 minutos, el barco guiña y deriva."),
+    "s_collision": ("Drill: collision", "Exercice : collision", "Ejercicio: colisión"),
+    "d_collision": ("Open sea, a collision course every 90 s (CPA 0, TCPA 8 min) plus two harmless targets. Try BOOT = snooze.",
+                    "Pleine mer, une route de collision toutes les 90 s (CPA 0, TCPA 8 min) et deux cibles sans danger. Essayez BOOT = pause.",
+                    "Mar abierto, un rumbo de colisión cada 90 s (CPA 0, TCPA 8 min) y dos blancos sin peligro. Pruebe BOOT = pausa."),
+    "s_shallow": ("Drill: shallow water", "Exercice : petits fonds", "Ejercicio: poca profundidad"),
+    "d_shallow": ("The depth ramps from 8 m down to 1 m and back every 2 minutes: minimum depth alarm, SOG / depth page.",
+                  "La profondeur passe de 8 m à 1 m et revient toutes les 2 minutes : alarme de profondeur minimale, page SOG / profondeur.",
+                  "La profundidad baja de 8 m a 1 m y vuelve cada 2 minutos: alarma de profundidad mínima, página SOG / profundidad."),
+    "s_signal": ("Drill: signal lost", "Exercice : signal perdu", "Ejercicio: señal perdida"),
+    "d_signal": ("Data for 25 s, then silence for 20 s: the orange SIGNAL LOST watermark appears and goes away again.",
+                 "Des données pendant 25 s, puis 20 s de silence : le filigrane orange SIGNAL PERDU apparaît puis disparaît.",
+                 "Datos durante 25 s y luego 20 s de silencio: aparece la marca naranja SEÑAL PERDIDA y desaparece."),
+}
+_lang = {"i": 0}
+
+
+def tr(key, *a):
+    t = TX[key][_lang["i"]]
+    for i, v in enumerate(a):
+        t = t.replace("{%d}" % i, str(v))
+    return t
+
+
+def default_lang():
+    """The Windows display language when it is French or Spanish, otherwise English."""
+    try:
+        import ctypes
+        lid = ctypes.windll.kernel32.GetUserDefaultUILanguage() & 0xFF
+        return {0x0C: "fr", 0x0A: "es"}.get(lid, "en")
+    except Exception:
+        return {"fr": "fr", "es": "es"}.get((os.environ.get("LANG", "en") or "en")[:2], "en")
+
+
 def run_gui(args):
     import tkinter as tk
     from tkinter import ttk
@@ -573,15 +733,39 @@ def run_gui(args):
             print("UI error:", e, file=sys.stderr)
         root.after(100, pump)
     root.after(100, pump)
-    root.title("EssentialWatch Simulator")
     root.geometry("1100x780")
+    saved = load_settings()
+    codes = [c for c, _ in LANGS]
+    _lang["i"] = codes.index(saved.get("lang") if saved.get("lang") in codes else default_lang())
+
+    # texts that change with the language: (function applying the text). L() creates the entry and applies it once.
+    relabel = []
+
+    def L(widget, key, *a, opt="text"):
+        relabel.append(lambda: widget.config(**{opt: tr(key, *a)}))
+        relabel[-1]()
+        return widget
+
+    def Lf(fn):
+        relabel.append(fn)
+        fn()
+
     logbox = tk.Text(root, height=6, state="disabled", font=("Consolas", 9))
     logbox.pack(side="bottom", fill="x")
+    topbar = ttk.Frame(root)
+    topbar.pack(side="top", fill="x")
+    lang_lbl = ttk.Label(topbar)
+    lang_box = ttk.Combobox(topbar, values=[n for _, n in LANGS], state="readonly", width=10)
+    lang_box.current(_lang["i"])
+    lang_box.pack(side="right", padx=8, pady=(4, 0))
+    L(lang_lbl, "lang")
+    lang_lbl.pack(side="right", pady=(4, 0))
     nb = ttk.Notebook(root)
     nb.pack(fill="both", expand=True)
     tab_sim, tab_tools = ttk.Frame(nb), ttk.Frame(nb)
-    nb.add(tab_sim, text="  Simulator  ")
-    nb.add(tab_tools, text="  Tools  ")
+    nb.add(tab_sim)
+    nb.add(tab_tools)
+    Lf(lambda: (root.title(tr("title")), nb.tab(tab_sim, text=tr("tab_sim")), nb.tab(tab_tools, text=tr("tab_tools"))))
 
     def log(s):
         def w():
@@ -599,58 +783,71 @@ def run_gui(args):
     left = ttk.Frame(tab_sim)
     left.pack(side="left", fill="y", padx=8, pady=8)
 
-    con = ttk.LabelFrame(left, text="NMEA server")
+    con = L(ttk.LabelFrame(left), "srv_box")
     con.pack(fill="x")
-    ttk.Label(con, text=f"This PC: {local_ip()}").grid(row=0, column=0, columnspan=2, sticky="w", **pad)
-    ttk.Label(con, text="Port").grid(row=1, column=0, sticky="w", **pad)
+    L(ttk.Label(con), "this_pc", local_ip()).grid(row=0, column=0, columnspan=2, sticky="w", **pad)
+    L(ttk.Label(con), "port").grid(row=1, column=0, sticky="w", **pad)
     port_v = tk.StringVar(value=str(args.port))
     ttk.Entry(con, textvariable=port_v, width=8).grid(row=1, column=1, sticky="w", **pad)
-    srv_btn = ttk.Button(con, text="Start")
+    srv_btn = ttk.Button(con)
     srv_btn.grid(row=2, column=0, columnspan=2, sticky="ew", **pad)
-    srv_info = ttk.Label(con, text="stopped")
+    srv_info = ttk.Label(con)
     srv_info.grid(row=3, column=0, columnspan=2, sticky="w", **pad)
+    Lf(lambda: srv_btn.config(text=tr("stop" if server.running else "start")))
 
     def toggle_server():
         if server.running:
             server.stop()
-            srv_btn.config(text="Start")
-            log("server stopped")
+            log(tr("log_stopped"))
         else:
             try:
                 server.start(int(port_v.get()))
             except (OSError, ValueError) as e:
-                busy = isinstance(e, OSError) and e.errno in (98, 10048, 10013)
-                log(f"cannot start: port {port_v.get()} is already used (another simulator still open?)" if busy else f"cannot start: {e}")
+                busy_ = isinstance(e, OSError) and e.errno in (98, 10048, 10013)
+                log(tr("log_busy", port_v.get()) if busy_ else tr("log_cannot", e))
                 return
-            srv_btn.config(text="Stop")
-            log(f"server on {local_ip()}:{port_v.get()}")
+            log(tr("log_server_on", local_ip(), port_v.get()))
+        srv_btn.config(text=tr("stop" if server.running else "start"))
     srv_btn.config(command=toggle_server)
 
-    sc = ttk.LabelFrame(left, text="Scenario")
+    sc = L(ttk.LabelFrame(left), "scenario")
     sc.pack(fill="x", pady=6)
-    scn_v = tk.StringVar(value=sim.scn.title)
-    box = ttk.Combobox(sc, textvariable=scn_v, values=[s.title for s in SCENARIOS], state="readonly", width=30)
+    box = ttk.Combobox(sc, state="readonly", width=34)
     box.pack(fill="x", **pad)
-    desc = tk.Label(sc, text=sim.scn.text, wraplength=270, justify="left", fg="#4E6D83")
+    desc = tk.Label(sc, wraplength=290, justify="left", fg="#4E6D83")
     desc.pack(fill="x", **pad)
+    cur_scn = {"i": SCENARIOS.index(sim.scn) if sim.scn in SCENARIOS else 0}
+
+    def scn_title(s):
+        return tr("s_" + s.key)
+
+    def scn_text(s):
+        return tr("d_" + s.key)
+
+    def fill_scenarios():
+        box["values"] = [scn_title(s) for s in SCENARIOS]
+        box.current(cur_scn["i"])
+        desc.config(text=scn_text(SCENARIOS[cur_scn["i"]]))
+    Lf(fill_scenarios)
 
     def pick(_=None):
-        s = next(x for x in SCENARIOS if x.title == scn_v.get())
+        cur_scn["i"] = box.current()
+        s = SCENARIOS[cur_scn["i"]]
         sim.tws_user = sim.twd_user = sim.manual_depth = None
         sim.mute = False
         sim.reset(s)
-        desc.config(text=s.text)
-        log(f"scenario: {s.title}")
+        desc.config(text=scn_text(s))
+        log(tr("log_scenario", scn_title(s)))
         sync_sliders()
     box.bind("<<ComboboxSelected>>", pick)
 
-    ctl = ttk.LabelFrame(left, text="Boat")
+    ctl = L(ttk.LabelFrame(left), "boat")
     ctl.pack(fill="x")
     twd_v, tws_v, dep_v = tk.DoubleVar(), tk.DoubleVar(), tk.DoubleVar(value=8)
     dep_auto = tk.BooleanVar(value=True)
 
-    def slider(row, label, var, lo, hi, cmd):
-        ttk.Label(ctl, text=label).grid(row=row, column=0, sticky="w", **pad)
+    def slider(row, key, var, lo, hi, cmd):
+        L(ttk.Label(ctl), key).grid(row=row, column=0, sticky="w", **pad)
         sc_ = tk.Scale(ctl, variable=var, from_=lo, to=hi, orient="horizontal", length=170, resolution=0.5)
         sc_.grid(row=row, column=1, **pad)
         # only real user moves count (a command= callback would also fire when the program sets the value)
@@ -665,10 +862,10 @@ def run_gui(args):
             dep_auto.set(False)   # moving the slider takes over from the scenario
         sim.manual_depth = None if dep_auto.get() else dep_v.get()
 
-    slider(0, "Wind from (deg)", twd_v, 0, 359, set_wind)
-    slider(1, "Wind speed (kn)", tws_v, 0, 60, set_wind)
-    slider(2, "Depth (m)", dep_v, 0.5, 60, set_depth)
-    ttk.Checkbutton(ctl, text="Depth from the scenario", variable=dep_auto, command=set_depth).grid(row=3, column=0, columnspan=2, sticky="w", **pad)
+    slider(0, "wind_from", twd_v, 0, 359, set_wind)
+    slider(1, "wind_speed", tws_v, 0, 60, set_wind)
+    slider(2, "depth_m", dep_v, 0.5, 60, set_depth)
+    L(ttk.Checkbutton(ctl, variable=dep_auto, command=set_depth), "depth_auto").grid(row=3, column=0, columnspan=2, sticky="w", **pad)
 
     def sync_sliders():
         twd_v.set(round(sim.twd))
@@ -676,43 +873,42 @@ def run_gui(args):
         dep_auto.set(True)
     sync_sliders()
 
-    act = ttk.LabelFrame(left, text="Traffic and signal")
+    act = L(ttk.LabelFrame(left), "traffic")
     act.pack(fill="x", pady=6)
-    ttk.Button(act, text="Collision course now", command=lambda: (sim.add_collision(), log("collision target added"))).pack(fill="x", **pad)
-    ttk.Button(act, text="Add a harmless target", command=sim.add_far).pack(fill="x", **pad)
-    ttk.Button(act, text="Remove all targets", command=sim.clear_targets).pack(fill="x", **pad)
+    L(ttk.Button(act, command=lambda: (sim.add_collision(), log(tr("log_collision")))), "btn_collision").pack(fill="x", **pad)
+    L(ttk.Button(act, command=sim.add_far), "btn_harmless").pack(fill="x", **pad)
+    L(ttk.Button(act, command=sim.clear_targets), "btn_clear").pack(fill="x", **pad)
     mute_v = tk.BooleanVar()
 
     def set_mute():
         sim.mute = mute_v.get()
-        log("signal lost: no data sent" if sim.mute else "signal back")
-    ttk.Checkbutton(act, text="Signal lost (send nothing)", variable=mute_v, command=set_mute).pack(anchor="w", **pad)
+        log(tr("log_mute") if sim.mute else tr("log_unmute"))
+    L(ttk.Checkbutton(act, variable=mute_v, command=set_mute), "chk_mute").pack(anchor="w", **pad)
 
-    # ---- right column: targets, watch ----
+    # ---- right column: targets ----
     right = ttk.Frame(tab_sim)
     right.pack(side="left", fill="both", expand=True, padx=8, pady=8)
 
-    tg = ttk.LabelFrame(right, text="AIS targets (red = the watch shows them in red)")
+    tg = L(ttk.LabelFrame(right), "targets")
     tg.pack(fill="x")
     cols = ("name", "mmsi", "dist", "brg", "cpa", "tcpa")
     tree = ttk.Treeview(tg, columns=cols, show="headings", height=6)
-    for c, w in zip(cols, (140, 90, 60, 50, 60, 60)):
-        tree.heading(c, text=c.upper())
+    for c, w in zip(cols, (140, 90, 60, 70, 60, 60)):
         tree.column(c, width=w, anchor="center")
+    Lf(lambda: [tree.heading(c, text=tr("col_" + c)) for c in cols])
     tree.tag_configure("red", foreground="#D63A3A")
     tree.pack(fill="x", **pad)
     own_lbl = ttk.Label(right, text="")
     own_lbl.pack(anchor="w", **pad)
 
     # ---------------- Tools tab: link to the real watch (network or USB), its address, screen mirror, console ----------------
-    saved = load_settings()
     mode_v, host_v, pw_v = tk.StringVar(value=saved.get("mode", "net")), tk.StringVar(value=saved.get("host", "")), tk.StringVar(value=saved.get("password", ""))
     if mode_v.get() == "usb":
         mode_v.set("net")   # the USB link must be opened again by hand
 
     def remember():
-        save_settings({"mode": mode_v.get(), "host": host_v.get().strip(), "password": pw_v.get()})
-    live_v, busy, dev = tk.BooleanVar(value=True), {"n": False}, {"link": None, "img": None, "ip": ""}
+        save_settings({"mode": mode_v.get(), "host": host_v.get().strip(), "password": pw_v.get(), "lang": codes[_lang["i"]]})
+    live_v, busy, dev = tk.BooleanVar(value=True), {"n": False}, {"link": None, "img": None, "ip": "", "last": None}
     try:
         from serial.tools import list_ports
     except ImportError:
@@ -740,7 +936,7 @@ def run_gui(args):
     def usb_link():
         ln = dev["link"]
         if not ln or not ln.ok:
-            raise RuntimeError("USB not connected: choose the port and press Connect")
+            raise RuntimeError(tr("m_usb_not"))
         return ln
 
     def dev_status():
@@ -748,7 +944,7 @@ def run_gui(args):
             return usb_link().status()
         api.host, api.password = host_v.get().strip(), pw_v.get()
         if not api.host:
-            raise RuntimeError("no watch IP yet")
+            raise RuntimeError(tr("m_noip"))
         return api.status()
 
     def dev_screen():
@@ -764,14 +960,14 @@ def run_gui(args):
     def dev_key(k):
         if mode_v.get() == "usb":
             if k not in USB_KEYS:
-                raise RuntimeError(f"'{k}' works only over the network")
+                raise RuntimeError(tr("m_netonly", k))
             usb_link().send(USB_KEYS[k])
             return
         api.host, api.password = host_v.get().strip(), pw_v.get()
         api.key(k)
 
     # 1. connection
-    conn = ttk.LabelFrame(tab_tools, text="1. Connection to the watch")
+    conn = L(ttk.LabelFrame(tab_tools), "t_conn")
     conn.pack(fill="x", padx=8, pady=(8, 4))
     r1 = ttk.Frame(conn)
     r1.pack(fill="x")
@@ -782,59 +978,60 @@ def run_gui(args):
         usb_row.pack_forget()
         (usb_row if mode_v.get() == "usb" else net_row).pack(fill="x")
         mirror_poll(now=True)
-    ttk.Radiobutton(r1, text="Network (Wi-Fi)", variable=mode_v, value="net", command=show_mode).pack(side="left", **pad)
-    ttk.Radiobutton(r1, text="USB cable", variable=mode_v, value="usb", command=show_mode).pack(side="left", **pad)
-    ttk.Label(net_row, text="Watch IP").pack(side="left", **pad)
+    L(ttk.Radiobutton(r1, variable=mode_v, value="net", command=show_mode), "t_net").pack(side="left", **pad)
+    L(ttk.Radiobutton(r1, variable=mode_v, value="usb", command=show_mode), "t_usb").pack(side="left", **pad)
+    L(ttk.Label(net_row), "t_ip").pack(side="left", **pad)
     ttk.Entry(net_row, textvariable=host_v, width=16).pack(side="left")
-    ttk.Label(net_row, text="admin password").pack(side="left", **pad)
+    L(ttk.Label(net_row), "t_pw").pack(side="left", **pad)
     ttk.Entry(net_row, textvariable=pw_v, show="*", width=14).pack(side="left")
-    ttk.Label(net_row, text="(the IP fills in by itself when the watch connects to the NMEA server)", foreground="#4E6D83").pack(side="left", **pad)
-    ttk.Label(usb_row, text="Port").pack(side="left", **pad)
+    L(ttk.Label(net_row, foreground="#4E6D83"), "t_ip_hint").pack(side="left", **pad)
+    L(ttk.Label(usb_row), "t_port").pack(side="left", **pad)
     port_sel = ttk.Combobox(usb_row, width=44, state="readonly")
     port_sel.pack(side="left")
 
     def refresh_ports():
         if not list_ports:
-            port_sel["values"] = ["pyserial missing: pip install pyserial"]
+            port_sel["values"] = [tr("t_nopyserial")]
             port_sel.current(0)
             return
         ps = sorted(list_ports.comports(), key=lambda p: (p.vid != 0x303A, p.device))   # Espressif first
-        port_sel["values"] = [f"{p.device} - {p.description}" for p in ps] or ["no serial port found"]
+        port_sel["values"] = [f"{p.device} - {p.description}" for p in ps] or [tr("t_noport")]
         port_sel.current(0)
-    usb_btn = ttk.Button(usb_row, text="Connect", width=12)
+    usb_btn = ttk.Button(usb_row, width=14)
+    Lf(lambda: usb_btn.config(text=tr("t_disconnect" if dev["link"] and dev["link"].ok else "t_connect")))
 
     def usb_toggle():
         ln = dev["link"]
         if ln and ln.ok:
             ln.close()
             dev["link"] = None
-            usb_btn.config(text="Connect")
-            console("USB closed")
+            usb_btn.config(text=tr("t_connect"))
+            console(tr("m_usb_closed"))
             return
         if not list_ports or " - " not in port_sel.get():
-            console("USB: no port selected")
+            console(tr("m_usb_nosel"))
             return
         ln = SerialLink(console)
         try:
             ln.open(port_sel.get().split(" - ")[0])
         except Exception as e:
-            console(f"USB: cannot open the port: {e}")
+            console(tr("m_usb_fail", e))
             return
         dev["link"] = ln
-        usb_btn.config(text="Disconnect")
-        console("USB open (if the watch restarts, wait ~20 s)")
+        usb_btn.config(text=tr("t_disconnect"))
+        console(tr("m_usb_open"))
         mirror_poll(now=True)
     usb_btn.config(command=usb_toggle)
-    ttk.Button(usb_row, text="Refresh", command=refresh_ports).pack(side="left", **pad)
+    L(ttk.Button(usb_row, command=refresh_ports), "t_refresh").pack(side="left", **pad)
     usb_btn.pack(side="left", **pad)
     refresh_ports()
 
     # 2. device address
-    inf = ttk.LabelFrame(tab_tools, text="2. Device address")
+    inf = L(ttk.LabelFrame(tab_tools), "t_addr")
     inf.pack(fill="x", padx=8, pady=4)
     addr_lbl = tk.Label(inf, text="-", font=("Segoe UI", 18, "bold"), anchor="w")
     addr_lbl.pack(fill="x", padx=8, pady=(4, 0))
-    det_lbl = ttk.Label(inf, text="not connected", justify="left")
+    det_lbl = L(ttk.Label(inf, justify="left"), "t_notconn")
     det_lbl.pack(anchor="w", padx=8, pady=2)
     ib = ttk.Frame(inf)
     ib.pack(fill="x")
@@ -843,7 +1040,7 @@ def run_gui(args):
         if dev["ip"]:
             root.clipboard_clear()
             root.clipboard_append(dev["ip"])
-            console(f"copied {dev['ip']}")
+            console(tr("m_copied", dev["ip"]))
 
     def use_net():
         if dev["ip"]:
@@ -854,24 +1051,25 @@ def run_gui(args):
     def point_here():
         try:
             usb_link().send(f"H{local_ip()}:{port_v.get()}\n")
-            console(f"told the watch to read NMEA from {local_ip()}:{port_v.get()} (until it restarts)")
+            console(tr("m_pointed", local_ip(), port_v.get()))
         except Exception as e:
             console(str(e))
-    ttk.Button(ib, text="Copy address", command=copy_addr).pack(side="left", **pad)
-    ttk.Button(ib, text="Use it for the network connection", command=use_net).pack(side="left", **pad)
-    ttk.Button(ib, text="Open its web page", command=lambda: dev["ip"] and __import__("webbrowser").open(f"http://{dev['ip']}/")).pack(side="left", **pad)
-    ttk.Button(ib, text="Point the watch at this simulator (USB)", command=point_here).pack(side="left", **pad)
+    L(ttk.Button(ib, command=copy_addr), "t_copy").pack(side="left", **pad)
+    L(ttk.Button(ib, command=use_net), "t_usenet").pack(side="left", **pad)
+    L(ttk.Button(ib, command=lambda: dev["ip"] and __import__("webbrowser").open(f"http://{dev['ip']}/")), "t_web").pack(side="left", **pad)
+    L(ttk.Button(ib, command=point_here), "t_point").pack(side="left", **pad)
 
     # 3. screen mirror + output
     low = ttk.Frame(tab_tools)
     low.pack(fill="both", expand=True, padx=8, pady=4)
-    mir = ttk.LabelFrame(low, text="3. Screen of the watch")
+    mir = L(ttk.LabelFrame(low), "t_screen")
     mir.pack(side="left", fill="y")
-    img_lbl = tk.Label(mir, text="live screen copy needs Pillow (pip install pillow)" if not Image else "no image yet", bg="#101820", fg="#ccc", width=34, height=18)
+    img_lbl = tk.Label(mir, bg="#101820", fg="#ccc", width=34, height=18)
+    Lf(lambda: dev["img"] is None and img_lbl.config(text=tr("t_noimg" if Image else "t_pillow")))
     img_lbl.pack(padx=6, pady=6)
     mb = ttk.Frame(mir)
     mb.pack(fill="x")
-    ttk.Checkbutton(mb, text="Live (while this tab is open)", variable=live_v).pack(side="left", **pad)
+    L(ttk.Checkbutton(mb, variable=live_v), "t_live").pack(side="left", **pad)
 
     def save_shot():
         if not dev["img"]:
@@ -880,14 +1078,14 @@ def run_gui(args):
         f = filedialog.asksaveasfilename(defaultextension=".png", initialfile="watch_" + time.strftime("%Y%m%d_%H%M%S") + ".png")
         if f:
             dev["img"].save(f)
-            console(f"saved {f}")
-    ttk.Button(mb, text="Save PNG", command=save_shot).pack(side="left", **pad)
+            console(tr("m_saved", f))
+    L(ttk.Button(mb, command=save_shot), "t_save").pack(side="left", **pad)
     kb = ttk.Frame(mir)
     kb.pack(fill="x")
-    for i, (label, k) in enumerate((("Right", "right"), ("Left", "left"), ("Double tap", "dtap"), ("Power", "power"), ("Snooze", "boot"), ("Vib. test", "vibtest"))):
-        ttk.Button(kb, text=label, width=9, command=lambda k=k: bg(lambda: dev_key(k), lambda r, e: e and console(f"key {k}: {e}"))).grid(row=i // 3, column=i % 3, padx=2, pady=2)
+    for i, k in enumerate(("right", "left", "dtap", "power", "boot", "vibtest")):
+        L(ttk.Button(kb, width=10, command=lambda k=k: bg(lambda: dev_key(k), lambda r, e: e and console(tr("m_key", k, e)))), "k_" + k).grid(row=i // 3, column=i % 3, padx=2, pady=2)
 
-    out = ttk.LabelFrame(low, text="Output of the watch (USB log) and commands")
+    out = L(ttk.LabelFrame(low), "t_out")
     out.pack(side="left", fill="both", expand=True, padx=(8, 0))
     con_box = tk.Text(out, height=10, state="disabled", font=("Consolas", 9), bg="#101820", fg="#B8D8E8")
     con_box.pack(fill="both", expand=True, padx=4, pady=4)
@@ -908,23 +1106,26 @@ def run_gui(args):
         except Exception as e:
             console(str(e))
     cmd_e.bind("<Return>", send_cmd)
-    ttk.Button(cr, text="Send", command=send_cmd).pack(side="left", padx=4)
-    ttk.Label(out, text="USB commands: CSTATUS, CGET, S (screen), U D O L B K (buttons), H<ip>:<port> (NMEA server)", foreground="#4E6D83").pack(anchor="w", padx=4)
+    L(ttk.Button(cr, command=send_cmd), "t_send").pack(side="left", padx=4)
+    L(ttk.Label(out, foreground="#4E6D83"), "t_cmds").pack(anchor="w", padx=4)
 
     def show_result(s, img):
+        dev["last"] = (s, img)
         ip = s.get("ip") or ""
         ap = s.get("ap_ip") or ""
         dev["ip"] = ip or ap
-        addr_lbl.config(text=ip or (f"{ap}  (its own Wi-Fi \"{s.get('ap')}\")" if ap else "not on Wi-Fi"))
+        addr_lbl.config(text=ip or (tr("m_apaddr", ap, s.get("ap")) if ap else tr("m_nowifi")))
         d = [f"{s.get('name', '')}  fw {s.get('fw')}", f"Wi-Fi: {s.get('wifi')}" + (f"  \"{s.get('ssid')}\"  {s.get('rssi')} dBm" if ip else ""),
-             f"NMEA server: {s.get('host')}:{s.get('port')}  " + ("connected" if s.get("server") else "NOT connected"),
-             f"battery {s.get('batt', '--')}%" + (" charging" if s.get("chg") else "")]
+             tr("m_nmea", s.get("host"), s.get("port"), tr("m_connected") if s.get("server") else tr("m_notconnected")),
+             tr("m_battery", s.get("batt", "--")) + (tr("m_charging") if s.get("chg") else "")]
         if s.get("alert"):
-            d.append("ALARM")
+            d.append(tr("m_alarm"))
         elif s.get("snooze"):
-            d.append(f"snoozed {s['snooze']} s")
+            d.append(tr("m_snoozed", s["snooze"]))
         if s.get("vib", -1) >= 0:
-            d.append(f"vibration GPIO {s['vib']}" + (" ON" if s.get("vibon") else ""))
+            d.append(tr("m_vibration", s["vib"]) + (tr("m_on") if s.get("vibon") else ""))
+        if s.get("screen") is False:
+            d.append(tr("m_screen_off"))
         det_lbl.config(text="\n".join(d))
         if ip and not host_v.get():
             host_v.set(ip)
@@ -966,28 +1167,41 @@ def run_gui(args):
             rows = [(t, *sim.risk(t)) for t in sim.targets]
             tn = sim.t
         own_lbl.config(text=f"t={int(tn)} s   SOG {o['sog']:.1f} kn  COG {o['cog']:.0f}  HDG {o['hdg']:.0f}   AWA {o['awa']:.0f}  AWS {o['aws']:.1f}   "
-                            f"TWA {o['twa']:.0f}  TWS {o['tws']:.1f}   depth {o['depth']:.1f} m" + ("   [SIGNAL LOST]" if sim.silent() else ""))
+                            f"TWA {o['twa']:.0f}  TWS {o['tws']:.1f}   {tr('depth')} {o['depth']:.1f} m" + (tr("signal_lost_tag") if sim.silent() else ""))
         tree.delete(*tree.get_children())
         for t, dist, brg, cpa, tcpa in rows:
             if dist > 9:
                 continue
             red = dist < 0.3 or (tcpa is not None and cpa < 0.3 and tcpa < 15)
-            tree.insert("", "end", tags=("red",) if red else (), values=(t["name"] or "(MMSI only)", t["mmsi"], f"{dist:.2f}", f"{brg:.0f}",
+            tree.insert("", "end", tags=("red",) if red else (), values=(t["name"] or tr("mmsi_only"), t["mmsi"], f"{dist:.2f}", f"{brg:.0f}",
                                                                        f"{cpa:.2f}", f"{tcpa:.1f}" if tcpa is not None else "-"))
         ips = server.watch_ips()
         if ips:
             if not host_v.get():
                 host_v.set(ips[0])
-            srv_info.config(text=f"watch connected: {ips[0]}")
+            srv_info.config(text=tr("watch_connected", ips[0]))
         else:
-            srv_info.config(text="running, no client" if server.running else "stopped")
+            srv_info.config(text=tr("running_no_client" if server.running else "stopped"))
         root.after(1000, tick)
 
+    def change_lang(_=None):
+        _lang["i"] = lang_box.current()
+        for fn in relabel:
+            fn()
+        refresh_ports()
+        if dev["last"]:
+            show_result(*dev["last"])
+        remember()
+    lang_box.bind("<<ComboboxSelected>>", change_lang)
+
+    if args.tab == "tools":
+        nb.select(tab_tools)
     tick()
     if not args.no_autostart:
         toggle_server()   # the watch reconnects by itself: no need to press Start
     if args.scenario:
-        scn_v.set(SCEN[args.scenario].title)
+        cur_scn["i"] = SCENARIOS.index(SCEN[args.scenario])
+        box.current(cur_scn["i"])
         pick()
     root.protocol("WM_DELETE_WINDOW", lambda: (remember(), server.stop(), root.destroy()))
     root.mainloop()
@@ -1011,6 +1225,7 @@ if __name__ == "__main__":
     ap.add_argument("--headless", action="store_true", help="no window: NMEA server only")
     ap.add_argument("--scenario", choices=list(SCEN), help="start with this scenario")
     ap.add_argument("--port", type=int, default=10112)
+    ap.add_argument("--tab", choices=["sim", "tools"], default="sim", help="window only: tab shown at launch")
     ap.add_argument("--no-autostart", action="store_true", help="window only: do not start the NMEA server at launch")
     ap.add_argument("--seconds", type=float, default=3600, help="headless run time")
     a = ap.parse_args()
