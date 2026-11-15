@@ -1,4 +1,4 @@
-// EssentialWatch - pagina web di configurazione (colori e font come essentialsail.com)
+// EssentialWatch - configuration web page (colours and fonts as on essentialsail.com)
 #pragma once
 #include <pgmspace.h>
 
@@ -82,7 +82,9 @@ legend{font-family:"Baloo 2",system-ui,sans-serif;font-weight:700;color:var(--pr
 <fieldset><legend>NMEA 0183 server (TCP)</legend>
  <div class="row"><div><label for="host">IP address</label><input id="host" placeholder="192.168.1.40"></div>
  <div style="flex:.5"><label for="port">Port</label><input id="port" type="number" min="1" max="65535"></div></div>
- <div class="hint">Common ports: 10110, 2000, 4242 (see your gateway).</div>
+ <div class="actions"><button class="btn alt small" type="button" id="nmeascan">Search NMEA server</button></div>
+ <select id="nmealist" hidden></select>
+ <div class="hint" id="nmeamsg">Searches this WiFi network for NMEA servers (ports 10110, 10111, 10112, 2000, 4242, 3000). Common ports: 10110, 2000, 4242 (see your gateway).</div>
 </fieldset>
 <fieldset><legend>Display</legend>
  <div class="row"><div><label for="dalarm">Minimum depth (m)</label><input id="dalarm" type="number" step="0.1" min="0" max="100"></div>
@@ -221,7 +223,7 @@ function fwUpload(blob,name){const m=$('fwmsg');
 $('fwfilego').onclick=()=>{const f=$('fwfile').files[0];const m=$('fwmsg');
  if(!f){m.textContent='Choose a .bin file first';m.className='warn';return}
  if(!confirm(`Install ${f.name} (${Math.round(f.size/1024)} KB)? The device restarts at the end.`))return;fwUpload(f,f.name)};
-// Firmware su GitHub: ogni versione e' una Release con il file .bin e il changelog nelle note
+// Firmware on GitHub: every version is a Release with the .bin file and the changelog in its notes
 const GH='https://api.github.com/repos/davideschiavon/EssentialWatch/releases?per_page=30';let rels=[];
 function relAsset(r){return(r.assets||[]).find(a=>/\.bin$/i.test(a.name)&&!/merged|bootloader|partitions/i.test(a.name))}
 function relShow(){const r=rels[$('fwsel').selectedIndex];if(!r)return;const L=$('fwlog');L.hidden=false;
@@ -247,7 +249,23 @@ $('fwgo').onclick=async()=>{const r=rels[$('fwsel').selectedIndex],m=$('fwmsg');
   if(j.ok){m.textContent='Installed. The watch is restarting: this page reloads in 30 s.';m.className='hint';setTimeout(()=>location.reload(),30000)}
   else{m.innerHTML='Install failed: '+j.error+'. You can also download <a href="'+a.browser_download_url+'" target="_blank">'+a.name+'</a> and use "Install a .bin file".';m.className='warn';$('fwgo').disabled=false}}
  catch(e){m.textContent='Connection lost: the watch is probably restarting. This page reloads in 30 s.';m.className='hint';setTimeout(()=>location.reload(),30000)}};
-// ora
+// Search NMEA server: the watch scans its own network, this page polls the result
+let nmeaHits=[];
+function nmeaMsg(t,ok){const m=$('nmeamsg');m.textContent=t;m.className=ok?'hint':'warn'}
+$('nmealist').onchange=()=>{const h=nmeaHits[$('nmealist').selectedIndex];if(h){$('host').value=h.ip;$('port').value=h.port}};
+$('nmeascan').onclick=async()=>{const b=$('nmeascan');b.disabled=true;$('nmealist').hidden=true;nmeaMsg('Searching the network...',true);
+ try{const r=await api('/api/nmeascan',{method:'POST'});if(!r.ok){nmeaMsg(r.error,false);b.disabled=false;return}
+  const t=setInterval(async()=>{try{const s=await api('/api/nmeascan');
+   if(s.running){nmeaMsg(`Searching the network... ${s.progress}%`,true);return}
+   clearInterval(t);b.disabled=false;
+   nmeaHits=s.hits.sort((a,b)=>b.nmea-a.nmea);
+   if(!nmeaHits.length){nmeaMsg('No NMEA server found. Check that the server is on and connected to the same WiFi network.',false);return}
+   const L=$('nmealist');L.innerHTML='';
+   nmeaHits.forEach(h=>{const o=document.createElement('option');o.textContent=`${h.ip}:${h.port}  ${h.nmea?'NMEA ('+h.sample+')':'open, no data'}`;L.appendChild(o)});
+   L.hidden=false;L.selectedIndex=0;L.onchange();
+   nmeaMsg(`${nmeaHits.length} found. The first one is filled in: press Save to use it.`,true)}catch(e){}},1000)}
+ catch(e){nmeaMsg('The search could not start',false);b.disabled=false}};
+// time
 async function setTime(ms){const r=await api('/api/config',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({epoch:Math.round(ms/1000)})});
  msg(r.ok?'Time set.':r.error,!!r.ok);status()}
 $('tgo').onclick=()=>{const v=$('tset').value;if(!v){msg('Pick a date and time first',false);return}setTime(new Date(v).getTime())};

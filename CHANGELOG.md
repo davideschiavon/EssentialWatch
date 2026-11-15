@@ -2,9 +2,11 @@
 
 Every version is published as a GitHub Release (firmware .bin + these notes); the watch web page lists them.
 
-## 2.2.2
+## 2.3.0
 
+- Web page: **Search NMEA server** scans the WiFi network of the watch (ports 10110, 10111, 10112, 2000, 4242, 3000), checks that the port really sends NMEA sentences and fills in the IP address and port.
 - Firmware search: the watch now downloads the firmware from GitHub itself (certificate checked, SHA-256 verified), because browsers cannot download GitHub release files (CORS). The watch needs a WiFi with Internet.
+- All code comments are now in English.
 
 ## 2.2.1
 

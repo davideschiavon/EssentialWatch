@@ -1,6 +1,6 @@
-// EssentialView - configurazione: pagina web (porta 80), rete WiFi di configurazione, comandi USB "C...".
-// Incluso da main.cpp dopo tutte le funzioni del dispositivo (usa cfg, display, handleKeys, ...).
-// Le stesse funzioni JSON servono la pagina web e il PC tool (EssentialView Configuration and Test Tool).
+// EssentialWatch - configuration: web page (port 80), configuration WiFi network, USB commands "C...".
+// Included by the main sketch after all the device functions (uses cfg, display, handleKeys, ...).
+// The same JSON functions serve the web page and the PC tool (EssentialView Configuration and Test Tool).
 #pragma once
 #include <WebServer.h>
 #include <ESPmDNS.h>
@@ -9,22 +9,24 @@
 #include <HTTPClient.h>
 #include <NetworkClientSecure.h>
 #include "mbedtls/sha256.h"
+#include <lwip/sockets.h>
+#include <fcntl.h>
 #include <DNSServer.h>
 #include "webpage.h"
 
 WebServer web(80);
-DNSServer dns;  // rete di configurazione: ogni nome porta alla pagina (il telefono la apre da solo)
+DNSServer dns;  // configuration network: every name leads to the page (the phone opens it by itself)
 bool apOn = false;
 uint32_t apRetryT = 0;
 String apName;
 
-// ---------- JSON comuni (web + USB) ----------
+// ---------- Common JSON (web + USB) ----------
 String cfgJson() {
   JsonDocument d;
   d["name"] = cfg.name;
   d["ssid"] = cfg.ssid;
-  d["pass_set"] = cfg.pass.length() > 0;    // la password non esce mai dal dispositivo
-  d["host"] = hostTemp ? savedHost : cfg.host;   // sempre il server salvato
+  d["pass_set"] = cfg.pass.length() > 0;    // the password never leaves the device
+  d["host"] = hostTemp ? savedHost : cfg.host;   // always the saved server
   d["port"] = hostTemp ? savedPort : cfg.port;
   d["dalarm"] = serialized(String(cfg.depthAlarm, 1));
   d["night"] = cfg.night;
@@ -39,7 +41,7 @@ String cfgJson() {
   return s;
 }
 
-// Backup delle impostazioni (file .json). Contiene la password WiFi, NON quella di amministratore.
+// Settings backup (.json file). Contains the WiFi password, NOT the administrator one.
 String backupJson() {
   JsonDocument d;
   d["type"] = "essentialview-config";
@@ -79,7 +81,7 @@ String statusJson() {
   float ta, ts;
   if (getTrue(ta, ts)) { d["twa"] = serialized(String(ta, 0)); d["tws"] = serialized(String(ts, 1)); }
   d["uptime"] = millis() / 1000;
-  {  // orologio, batteria, tasti
+  {  // clock, battery, keys
     time_t tn = time(nullptr);
     struct tm tmv;
     localtime_r(&tn, &tmv);
@@ -127,12 +129,12 @@ String scanJson() {
   return s;
 }
 
-// Applica le chiavi presenti nel JSON (le assenti restano come sono), salva in memoria.
-// "pass"/"webpass" presenti = nuove password (anche vuote). Ritorna "" se ok, altrimenti l'errore.
+// Applies the keys present in the JSON (missing ones stay as they are), saves to memory.
+// "pass"/"webpass" present = new passwords (even empty). Returns "" if ok, otherwise the error.
 String applyCfg(const String &body, bool &needRestart) {
   JsonDocument d;
   if (deserializeJson(d, body)) return "invalid JSON";
-  if (hostTemp) {  // un salvataggio chiude il reindirizzamento temporaneo del banco di prova
+  if (hostTemp) {  // a save closes the temporary redirection of the test bench
     cfg.host = savedHost; cfg.port = savedPort; hostTemp = false;
     nmea.stop(); srvUp = false; lastConnTry = 0;
   }
@@ -199,8 +201,8 @@ String applyCfg(const String &body, bool &needRestart) {
 String okJson(bool restart) { return String("{\"ok\":true,\"restart\":") + (restart ? "true" : "false") + "}"; }
 String errJson(const String &e) { return String("{\"ok\":false,\"error\":\"") + e + "\"}"; }
 
-// tasti dell'orologio dalla pagina web: right / left = scorrimento, dtap = doppio tocco (giorno/notte),
-// power = tasto PWR (schermo acceso/spento), boot = tasto BOOT (snooze allarme)
+// watch keys from the web page: right / left = swipe, dtap = double tap (day/night),
+// power = PWR button (screen on/off), boot = BOOT button (alarm snooze)
 bool sendKeyName(const String &k) {
   if (!screenOn && k != "power") screenSet(true);
   if (k == "right") handleKeys(EV_SHORT, EV_NONE, EV_NONE, EV_NONE);
@@ -223,7 +225,7 @@ void sendKeyChar(char k) {
   }
 }
 
-// ---------- comandi USB: "CGET", "CSTATUS", "CSCAN", "CSET {json}", "CRESTART" ----------
+// ---------- USB commands: "CGET", "CSTATUS", "CSCAN", "CSET {json}", "CRESTART" ----------
 void configCmd(const String &c) {
   if (c == "GET") Serial.println("CFG " + cfgJson());
   else if (c == "STATUS") Serial.println("STATUS " + statusJson());
@@ -238,8 +240,8 @@ void configCmd(const String &c) {
   } else Serial.println("CFG_ERR " + errJson("unknown command"));
 }
 
-// ---------- pagina web ----------
-// Login sempre richiesto via rete (utente admin). Via USB no: accesso fisico, serve a recuperare la password.
+// ---------- web page ----------
+// Login always required over the network (user admin). Not over USB: physical access, used to recover the password.
 bool webAuth() {
   if (web.authenticate(WEB_USER, cfg.webpass.c_str())) return true;
   web.requestAuthentication(BASIC_AUTH, "EssentialWatch");
@@ -251,13 +253,13 @@ void sendJson(const String &s, int code = 200) {
   web.send(code, "application/json", s);
 }
 
-// Schermo come BMP a 24 bit letto dal buffer di disegno RGB565: 410x502, oppure 205x251 con ?half=1
-// (4 volte meno dati: per l'aggiornamento continuo del tool PC su un Wi-Fi lento)
+// Screen as a 24-bit BMP read from the RGB565 drawing buffer: 410x502, or 205x251 with ?half=1
+// (4 times less data: for continuous updates of the PC tool on a slow WiFi)
 void sendScreenBmp() {
   if (!cv) { web.send(503, "text/plain", "no screen buffer"); return; }
   const int step = web.hasArg("half") ? 2 : 1;
   const int W = SCR_W / step, H = SCR_H / step;
-  const uint32_t rowB = ((uint32_t)W * 3 + 3) & ~3u;   // le righe del BMP sono allineate a 4 byte (1232 / 616)
+  const uint32_t rowB = ((uint32_t)W * 3 + 3) & ~3u;   // BMP rows are aligned to 4 bytes (1232 / 616)
   const uint32_t img = rowB * H, off = 54, total = off + img;
   uint8_t h[54] = {0};
   auto le32 = [&](int i, uint32_t v) { h[i] = v; h[i + 1] = v >> 8; h[i + 2] = v >> 16; h[i + 3] = v >> 24; };
@@ -267,22 +269,22 @@ void sendScreenBmp() {
   web.setContentLength(total);
   web.send(200, "image/bmp", "");
   web.sendContent((const char *)h, sizeof h);
-  uint8_t *row = (uint8_t *)calloc(rowB, 1);   // i byte di allineamento restano a 0
+  uint8_t *row = (uint8_t *)calloc(rowB, 1);   // the alignment bytes stay 0
   if (!row) return;
   const uint16_t *fb = cv->getFramebuffer();
-  for (int y = H - 1; y >= 0; y--) {           // BMP: righe dal basso verso l'alto
+  for (int y = H - 1; y >= 0; y--) {           // BMP: rows from bottom to top
     const uint16_t *src = fb + (uint32_t)y * step * SCR_W;
     for (int x = 0; x < W; x++) {
       uint16_t p = src[x * step];
       uint8_t r = ((p >> 11) & 0x1F) * 255 / 31, g = ((p >> 5) & 0x3F) * 255 / 63, b = (p & 0x1F) * 255 / 31;
       row[x * 3] = b; row[x * 3 + 1] = g; row[x * 3 + 2] = r;
     }
-    if (web.client().write(row, rowB) != rowB) break;   // il client e' sparito: non restare a scrivere nel vuoto
+    if (web.client().write(row, rowB) != rowB) break;   // the client is gone: do not keep writing into the void
   }
   free(row);
 }
 
-// ---------- aggiornamento firmware ----------
+// ---------- firmware update ----------
 bool otaAuthOk = false;
 String otaErr;
 size_t otaBytes = 0;
@@ -311,15 +313,16 @@ void otaUpload() {
   }
 }
 
-// Aggiornamento dall'orologio stesso: scarica il firmware dalle Release GitHub di questo progetto (HTTPS con certificato
-// verificato, SHA-256 controllato) e lo installa. Il browser non puo' scaricarlo (GitHub non invia le intestazioni CORS).
+// Update from the watch itself: downloads the firmware from the GitHub Releases of this project (HTTPS with a verified
+// certificate, SHA-256 checked) and installs it. The browser cannot download it (GitHub does not send the CORS headers).
 String fwFromUrl(const String &url, const String &sha256hex) {
   const String prefix = "https://github.com/davideschiavon/EssentialWatch/releases/download/";
   if (!url.startsWith(prefix)) return "only firmware from the EssentialWatch GitHub releases can be installed";
   if (WiFi.status() != WL_CONNECTED) return "the watch is not connected to a WiFi network";
   if (!clockValid()) return "the watch clock is not set (needed for HTTPS): set the date and time first";
   showMsg("Downloading firmware", "from GitHub...");
-  NetworkClientSecure client;   // senza altre impostazioni usa i certificati radice integrati: la catena viene verificata
+  NetworkClientSecure client;
+  client.useBuiltinCACertBundle();   // verify the server certificate chain with the built-in root certificates
   HTTPClient http;
   http.setFollowRedirects(HTTPC_STRICT_FOLLOW_REDIRECTS);
   http.setTimeout(15000);
@@ -375,6 +378,125 @@ String fwFromUrl(const String &url, const String &sha256hex) {
   return "";
 }
 
+// ---------- "Search NMEA server": scans the /24 network of the watch ----------
+// Stage 1: non-blocking TCP connects to every host on a few common NMEA ports (a small pool of sockets at a time).
+// Stage 2: every open port is read for ~2 s; it is a real NMEA server if it sends lines starting with '$' or '!'.
+struct NmeaHit { uint8_t host; uint16_t port; bool nmea; char sample[8]; };
+static NmeaHit scanHits[16];
+static volatile int scanNHits = 0, scanProgress = 0;
+static volatile bool scanRunning = false;
+static uint8_t scanBase[3] = {0, 0, 0};
+static const uint16_t SCAN_PORTS[] = {10110, 10111, 10112, 2000, 4242, 3000};   // common NMEA / gateway ports
+
+static void nmeaScanTask(void *) {
+  const int nPorts = sizeof(SCAN_PORTS) / sizeof(SCAN_PORTS[0]);
+  const int total = 254 * nPorts, SLOTS = 5;
+  const uint8_t myHost = WiFi.localIP()[3];
+  struct Slot { int fd; uint32_t t0; uint8_t host; uint16_t port; } slot[SLOTS];
+  for (auto &s : slot) s.fd = -1;
+  struct Open { uint8_t host; uint16_t port; };
+  static Open opens[48];
+  int nOpen = 0, issued = 0, done = 0;
+  while (done < total) {
+    for (auto &s : slot) {   // refill the free slots
+      while (s.fd < 0 && issued < total) {
+        uint8_t host = 1 + issued / nPorts;
+        uint16_t port = SCAN_PORTS[issued % nPorts];
+        if (host == myHost) { issued++; done++; continue; }
+        int fd = socket(AF_INET, SOCK_STREAM, 0);
+        if (fd < 0) break;   // out of sockets: try again on the next round
+        fcntl(fd, F_SETFL, O_NONBLOCK);
+        struct sockaddr_in a;
+        memset(&a, 0, sizeof a);
+        a.sin_family = AF_INET;
+        a.sin_port = htons(port);
+        a.sin_addr.s_addr = (uint32_t)IPAddress(scanBase[0], scanBase[1], scanBase[2], host);
+        connect(fd, (struct sockaddr *)&a, sizeof a);   // returns EINPROGRESS
+        s.fd = fd; s.t0 = millis(); s.host = host; s.port = port;
+        issued++;
+      }
+    }
+    fd_set wf;
+    FD_ZERO(&wf);
+    int maxfd = -1;
+    for (auto &s : slot) if (s.fd >= 0) { FD_SET(s.fd, &wf); if (s.fd > maxfd) maxfd = s.fd; }
+    if (maxfd >= 0) {
+      struct timeval tv = {0, 20000};
+      select(maxfd + 1, nullptr, &wf, nullptr, &tv);
+    } else {
+      vTaskDelay(5);
+    }
+    for (auto &s : slot) {
+      if (s.fd < 0) continue;
+      bool fin = false;
+      if (FD_ISSET(s.fd, &wf)) {   // connect finished: success only if SO_ERROR is 0 (otherwise refused)
+        int err = 0;
+        socklen_t l = sizeof err;
+        getsockopt(s.fd, SOL_SOCKET, SO_ERROR, &err, &l);
+        if (err == 0 && nOpen < 48) opens[nOpen++] = {s.host, s.port};
+        fin = true;
+      } else if (millis() - s.t0 > 150) {
+        fin = true;   // no answer: host absent
+      }
+      if (fin) { close(s.fd); s.fd = -1; done++; scanProgress = 90 * done / total; }
+    }
+  }
+  for (int i = 0; i < nOpen && scanNHits < 16; i++) {   // stage 2: is it really NMEA?
+    WiFiClient c;
+    IPAddress ip(scanBase[0], scanBase[1], scanBase[2], opens[i].host);
+    NmeaHit h = {opens[i].host, opens[i].port, false, ""};
+    if (c.connect(ip, opens[i].port, 800)) {
+      uint32_t t = millis();
+      String line;
+      while (millis() - t < 2000 && c.connected() && !h.nmea) {
+        while (c.available() && !h.nmea) {
+          char ch = (char)c.read();
+          if (ch == '\n' || ch == '\r') {
+            if (line.length() >= 6 && (line[0] == '$' || line[0] == '!')) { h.nmea = true; strncpy(h.sample, line.c_str(), 6); h.sample[6] = 0; }
+            line = "";
+          } else if (line.length() < 100) {
+            line += ch;
+          }
+        }
+        vTaskDelay(10);
+      }
+      c.stop();
+    }
+    scanHits[scanNHits++] = h;
+    scanProgress = 90 + 10 * (i + 1) / nOpen;
+  }
+  scanProgress = 100;
+  scanRunning = false;
+  vTaskDelete(nullptr);
+}
+
+String nmeaScanStart() {
+  if (scanRunning) return "";
+  if (WiFi.status() != WL_CONNECTED) return "the watch is not connected to a WiFi network";
+  IPAddress me = WiFi.localIP();
+  scanBase[0] = me[0]; scanBase[1] = me[1]; scanBase[2] = me[2];
+  scanNHits = 0; scanProgress = 0; scanRunning = true;
+  xTaskCreatePinnedToCore(nmeaScanTask, "nmeascan", 8192, nullptr, 1, nullptr, 0);
+  return "";
+}
+
+String nmeaScanJson() {
+  JsonDocument d;
+  d["running"] = (bool)scanRunning;
+  d["progress"] = (int)scanProgress;
+  JsonArray a = d["hits"].to<JsonArray>();
+  for (int i = 0; i < scanNHits; i++) {
+    JsonObject o = a.add<JsonObject>();
+    o["ip"] = IPAddress(scanBase[0], scanBase[1], scanBase[2], scanHits[i].host).toString();
+    o["port"] = scanHits[i].port;
+    o["nmea"] = scanHits[i].nmea;
+    o["sample"] = String(scanHits[i].sample);
+  }
+  String s;
+  serializeJson(d, s);
+  return s;
+}
+
 void webSetup() {
   web.on("/", HTTP_GET, [] {
     if (!webAuth()) return;
@@ -414,7 +536,7 @@ void webSetup() {
     else sendJson(errJson("k = right left dtap power boot (or U D O L B K)"), 400);
   });
   web.on("/screen.bmp", HTTP_GET, [] { if (webAuth()) sendScreenBmp(); });
-  // aggiornamento firmware (OTA): POST multipart con il file firmware.bin
+  // firmware update (OTA): multipart POST with the firmware.bin file
   web.on("/api/update", HTTP_POST, [] {
     if (!otaAuthOk) { web.requestAuthentication(BASIC_AUTH, "EssentialView"); return; }
     bool ok = !otaErr.length() && !Update.hasError();
@@ -426,6 +548,12 @@ void webSetup() {
       ESP.restart();
     }
   }, [] { otaUpload(); });
+  web.on("/api/nmeascan", HTTP_POST, [] {
+    if (!webAuth()) return;
+    String e = nmeaScanStart();
+    sendJson(e.length() ? errJson(e) : okJson(false), e.length() ? 400 : 200);
+  });
+  web.on("/api/nmeascan", HTTP_GET, [] { if (webAuth()) sendJson(nmeaScanJson()); });
   web.on("/api/fwurl", HTTP_POST, [] {
     if (!webAuth()) return;
     JsonDocument d;
@@ -438,7 +566,7 @@ void webSetup() {
     ESP.restart();
   });
   web.onNotFound([] {
-    if (apOn && web.hostHeader() != WiFi.softAPIP().toString()) {  // richieste "captive portal" dei telefoni
+    if (apOn && web.hostHeader() != WiFi.softAPIP().toString()) {  // "captive portal" requests from phones
       web.sendHeader("Location", String("http://") + WiFi.softAPIP().toString() + "/");
       web.send(302, "text/plain", "");
       return;
@@ -448,16 +576,16 @@ void webSetup() {
   web.begin();
 }
 
-// Rete di configurazione: si accende se la rete di bordo non e' raggiungibile dopo CONFIG_AP_AFTER_MS
-// (o se non c'e' un SSID), si spegne quando il WiFi di bordo e' connesso e nessuno e' collegato all'AP.
-// Primo avvio (nessuna rete salvata): rete APERTA SETUP_AP_NAME, solo access point.
-// Rete di bordo salvata ma irraggiungibile: rete di emergenza "EssentialView-XXXX" con password.
+// Configuration network: switches on if the boat network is not reachable after CONFIG_AP_AFTER_MS
+// (or if there is no SSID), switches off when the boat WiFi is connected and nobody is connected to the AP.
+// First start (no saved network): OPEN network SETUP_AP_NAME, access point only.
+// Boat network saved but unreachable: emergency network "EssentialView-XXXX" with password.
 void startConfigAP() {
   bool first = !cfg.ssid.length();
   if (first) {
     apName = SETUP_AP_NAME;
     WiFi.mode(WIFI_AP);
-    WiFi.softAP(apName.c_str());   // aperta
+    WiFi.softAP(apName.c_str());   // open
   } else {
     uint8_t mac[6];
     WiFi.macAddress(mac);
@@ -466,7 +594,7 @@ void startConfigAP() {
     apName = b;
     WiFi.mode(WIFI_AP_STA);
     WiFi.softAP(apName.c_str(), CONFIG_AP_PASS);
-    WiFi.setAutoReconnect(false);   // i tentativi continui disturberebbero l'AP: riprova ogni 60 s
+    WiFi.setAutoReconnect(false);   // continuous attempts would disturb the AP: retry every 60 s
   }
   dns.start(53, "*", WiFi.softAPIP());
   apOn = true;
@@ -478,7 +606,7 @@ void startConfigAP() {
 
 void netCfgLoop() {
   static bool mdnsOn = false;
-  static uint32_t lastSta = 0;   // ultima volta che il WiFi di bordo era connesso
+  static uint32_t lastSta = 0;   // last time the boat WiFi was connected
   web.handleClient();
   if (apOn) dns.processNextRequest();
   uint32_t now = millis();

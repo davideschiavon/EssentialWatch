@@ -33,11 +33,12 @@ through a transistor to a free GPIO and set `VIB_PIN` in `EssentialViewS3/config
 ## Web page (port 80)
 
 Default login admin / admin (change it). Without Wi-Fi the board starts the AP "EssentialView Network" at 192.168.4.1.
-Settings: Wi-Fi, NMEA server (TCP), minimum depth, time zone, **date and time**, orientation, name, password.
+Settings: Wi-Fi, NMEA server (TCP, with a "Search NMEA server" network scan), minimum depth, time zone, **date and time**, orientation, name, password.
 The screen is shown live with the buttons Right, Left, Double Tap, Power and Boot.
 
 **Firmware update:** *Search firmware* lists the firmware published as **GitHub Releases** of this repository
-(latest first), shows the changelog of the selected one and installs it. Nothing is read from the `release/` folder.
+(latest first), shows the changelog of the selected one and installs it: the watch downloads the file from GitHub itself
+(HTTPS, SHA-256 checked), so it needs a Wi-Fi with Internet. Nothing is read from the `release/` folder.
 Publishing a firmware (always with its changelog in the release notes):
 
 ```
