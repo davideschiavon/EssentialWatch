@@ -5,7 +5,7 @@
 //  (ESP32-S3, 2.06" 410x502 QSPI CO5300 AMOLED, FT3168 touch, AXP2101 PMU)
 // ---------------------------------------------------------------
 
-#define FW_VERSION "2.5.0-s3"
+#define FW_VERSION "2.6.0-s3"
 
 // Logical resolution of the interface (same as the panel, portrait)
 #define SCR_W 410
@@ -58,6 +58,7 @@
 // Screen refresh
 #define REFRESH_MS      250    // redraw check (the drawing happens only if the data change)
 #define FULL_REDRAW_MS  5000   // forced redraw every so many ms even without changes
+#define NMEA_IDLE_MS    15000  // no byte from the NMEA server for this long: the connection is dropped and redone
 #define DATA_STALE_MS   6000   // after this time without data it shows "--"
 
 // Touch

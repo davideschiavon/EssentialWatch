@@ -31,6 +31,7 @@ String cfgJson() {
   d["dalarm"] = serialized(String(cfg.depthAlarm, 1));
   d["cpa"] = serialized(String(cfg.cpaNm, 2));
   d["tcpa"] = serialized(String(cfg.tcpaMin, 0));
+  d["lang"] = LANG_CODES[cfg.lang];
   d["night"] = cfg.night;
   d["rot"] = cfg.rot;
   d["tz"] = cfg.tz;
@@ -57,6 +58,7 @@ String backupJson() {
   d["dalarm"] = serialized(String(cfg.depthAlarm, 1));
   d["cpa"] = serialized(String(cfg.cpaNm, 2));
   d["tcpa"] = serialized(String(cfg.tcpaMin, 0));
+  d["lang"] = LANG_CODES[cfg.lang];
   d["night"] = cfg.night;
   d["rot"] = cfg.rot;
   d["tz"] = cfg.tz;
@@ -175,6 +177,11 @@ String applyCfg(const String &body, bool &needRestart, bool fromWeb = false) {
     float a = d["tcpa"].as<float>();
     if (a < 1 || a > 120) return "collision TCPA: 1-120 min";
     n.tcpaMin = a;
+  }
+  if (!d["lang"].isNull()) {
+    int l = langFromCode(d["lang"].as<const char *>() ? d["lang"].as<const char *>() : "");
+    if (l < 0) return "language: en, fr, es";
+    n.lang = l;
   }
   if (!d["night"].isNull()) n.night = d["night"].as<bool>();
   if (!d["rot"].isNull()) n.rot = d["rot"].as<int>() == 2 ? 2 : 0;

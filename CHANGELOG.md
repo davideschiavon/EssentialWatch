@@ -2,6 +2,26 @@
 
 Every version is published as a GitHub Release (firmware .bin + these notes); the watch web page lists them.
 
+## 2.6.0
+
+- **Languages**: English, French and Spanish, on the watch (pages, settings, messages, day and month names,
+  O for West on the compass) and on the web page. Choose it in the watch menu (Settings > Language, applied at once)
+  or on the web page (selector at the top, or Display > Language). The page follows the language of the watch.
+  The letters the Essentialsail fonts lack (ç ñ á í ó ú ê â ô ü ¿ ¡ ...) come from DejaVu Sans.
+- The "signal lost" watermark is now translated ("SIGNAL LOST", "SIGNAL PERDU", "SEÑAL PERDIDA"); it was always in Italian.
+- NMEA server: a connection that stays silent for 15 s is dropped and made again. A server that disappeared without
+  closing the connection (PC switched off, simulator closed) left the watch "connected" to nothing, so it never
+  reached the new server.
+- Fixed (2.4.1): the settings menu had more rows than the screen, so "Power off" and "Exit without saving" were
+  hidden under the keys. The menu now scrolls (arrows show more rows).
+- Fixed (2.4.1): editing "Collision CPA" / "Collision TCPA" read a title outside its table (garbage or a crash).
+- Web page: the vibration hint said the board has no motor (it is on GPIO 18); the screen copy text says 10 s.
+- Simulator: a screen copy damaged on the USB link is discarded instead of being shown with shifted colours.
+- Simulator: its NMEA server could stop accepting connections (an error in the accepting thread, which wrote to the
+  window from a background thread): the port stayed open but the watch could not connect. Window updates now go
+  through a queue, client errors are caught, and a second simulator on the same port now reports "port already
+  used" instead of sharing it silently.
+
 ## 2.5.0
 
 Smoother page changes. Measured on the watch (USB "PERF" log line, every 5 s):

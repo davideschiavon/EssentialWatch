@@ -95,6 +95,7 @@ struct Settings {
   uint8_t bright = 100;   // screen brightness, 5-100 %
   String tz;          // POSIX time zone, e.g. "CET-1CEST,M3.5.0,M10.5.0/3"
   int8_t vibPin = VIB_PIN;   // GPIO of an external vibration motor driver (-1 = none)
+  uint8_t lang = 0;          // user interface language: 0 English, 1 French, 2 Spanish (lang.h)
 } cfg;
 
 void loadCfg() {
@@ -115,6 +116,8 @@ void loadCfg() {
   cfg.tz = prefs.getString("tz", DEFAULT_TZ);
   if (!cfg.tz.length()) cfg.tz = DEFAULT_TZ;
   cfg.vibPin = prefs.getChar("vib", VIB_PIN);
+  cfg.lang = prefs.getUChar("lang", 0);
+  if (cfg.lang > 2) cfg.lang = 0;
   prefs.end();
 }
 void saveCfg() {
@@ -133,6 +136,7 @@ void saveCfg() {
   prefs.putString("tz", cfg.tz);
   prefs.putUChar("bright", cfg.bright);
   prefs.putChar("vib", cfg.vibPin);
+  prefs.putUChar("lang", cfg.lang);
   prefs.end();
 }
 void applyTheme() { TH = cfg.night ? NIGHT_THEME : DAY_THEME; }
@@ -141,6 +145,7 @@ void applyBrightness() { lcd->setBrightness((uint8_t)(255 * constrain((int)cfg.b
 // Essentialsail font (anti-aliased) and the degree symbol in UTF-8
 #define DEG "Â°"
 #include "es_text.h"
+#include "lang.h"   // texts in English, French and Spanish: T("...")
 
 // ============================== On-board data =============================
 struct Val {
@@ -611,6 +616,7 @@ void handleNmea(const String &raw) {
 // background and the loop only polls it; once connected it is handed to the WiFiClient.
 int connFd = -1;
 uint32_t connStart = 0;
+uint32_t nmeaLastByte = 0;   // last byte received from the NMEA server
 const uint32_t CONN_TIMEOUT_MS = 3000;
 
 void nmeaAbort() {
@@ -669,7 +675,7 @@ void netLoop() {
     if (connFd >= 0) {
       int r = nmeaConnPoll();
       if (r > 0) {
-        srvUp = true; lineBuf = ""; fails = 0;
+        srvUp = true; lineBuf = ""; fails = 0; nmeaLastByte = millis();
         Serial.printf("NMEA: connected to %s:%u\n", cfg.host.c_str(), cfg.port);
       } else if (r < 0) {
         if (fails < 255) fails++;
@@ -690,8 +696,18 @@ void netLoop() {
     return;
   }
   srvUp = true;
+  // A server that vanished without closing the connection (PC switched off, Wi-Fi lost on its side) leaves a
+  // half-open socket that still looks connected: after NMEA_IDLE_MS without a byte, drop it and reconnect.
+  if (millis() - nmeaLastByte > NMEA_IDLE_MS) {
+    Serial.printf("NMEA: no data for %u s, reconnecting\n", (unsigned)(NMEA_IDLE_MS / 1000));
+    nmea.stop();
+    srvUp = false;
+    lastConnTry = 0;
+    return;
+  }
   int guard = 0;
   while (nmea.available() && guard++ < 600) {
+    nmeaLastByte = millis();
     char c = (char)nmea.read();
     if (c == '\n' || c == '\r') {
       if (lineBuf.length()) { handleNmea(lineBuf); lineBuf = ""; }
@@ -820,7 +836,8 @@ int curIdx = 0;
 size_t editMax = 63;
 const char CS_FULL[] = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789 -_.,:;!?@#$%&*()+=/\\'\"<>[]{}|~^`";
 const char CS_NUM[] = "0123456789.";
-const char *EDIT_TITLES[] = {"WiFi password", "NMEA server IP", "Server port", "Depth alarm (m)"};
+const char *EDIT_TITLES[] = {"WiFi password", "NMEA server IP", "Server port", "Depth alarm (m)", "Collision CPA (nm)",
+                             "Collision TCPA (min)"};   // same order as EditT
 
 // WiFi scan
 String scanSsid[12];
@@ -1003,7 +1020,8 @@ String fv(const Val &v, int dec = 1) { return v.ok() ? String(v.v, dec) : String
 
 const char *cardinal(float h) {
   static const char *n[] = {"N", "NE", "E", "SE", "S", "SW", "W", "NW"};
-  return n[((int)lroundf(h / 45.0f)) % 8];
+  static const char *o[] = {"N", "NE", "E", "SE", "S", "SO", "O", "NO"};   // French and Spanish: Ouest / Oeste
+  return (cfg.lang == L_EN ? n : o)[((int)lroundf(h / 45.0f)) % 8];
 }
 
 bool statusLive() { return srvUp && (aws.ok() || depth.ok() || sog.ok()); }
@@ -1022,7 +1040,10 @@ void drawKeybar() {
     cv->fillRoundRect(x, y, bw, bh, 12, pressed ? TH.pri : TH.bg);
     cv->drawRoundRect(x, y, bw, bh, 12, TH.pri);
     tColor(pressed ? TH.card : TH.pri);
-    tCC(KEY_LABELS[i], x + bw / 2, y + bh / 2);
+    const char *lab = T(KEY_LABELS[i]);
+    tFont(&F_HEAD);
+    if (tWidth(lab) > bw - 12) tFont(&F_TEXT);   // long words (ARRIBA, ATRÁS, RETOUR): smaller font
+    tCC(lab, x + bw / 2, y + bh / 2);
   }
 }
 
@@ -1030,12 +1051,12 @@ void drawKeybar() {
 void hint(const char *l1, const char *l2 = nullptr) {
   tFont(&F_TEXT_S);
   tColor(TH.mfg);
-  if (l2) { tAt(10, KEYBAR_Y - 26, l1); tAt(10, KEYBAR_Y - 8, l2); }
-  else tAt(10, KEYBAR_Y - 8, l1);
+  if (l2) { tAt(10, KEYBAR_Y - 26, T(l1)); tAt(10, KEYBAR_Y - 8, T(l2)); }
+  else tAt(10, KEYBAR_Y - 8, T(l1));
 }
 
 // No title bar: only the page dots at the bottom; when no NMEA data has arrived for
-// more than DATA_STALE_MS (wind and navigation pages) the orange "SEGNALE PERSO" watermark appears.
+// more than DATA_STALE_MS (wind and navigation pages) the orange "SIGNAL LOST" watermark appears (translated).
 bool dataLive() {
   return awa.ok() || aws.ok() || twaS.ok() || twsS.ok() || sog.ok() || stw.ok() || depth.ok() || hdg.ok();
 }
@@ -1065,10 +1086,10 @@ void drawStatusBar() {
   tFont(&F_TEXT_S);
   if (alertActive) {
     tColor(TH.bad);
-    tCC("BOOT = SNOOZE 5 MIN", SCR_W / 2, SCR_H - 14);
+    tCC(T("BOOT = SNOOZE 5 MIN"), SCR_W / 2, SCR_H - 14);
   } else if (snz && (riskNow || shallowNow)) {
     int left = (int)((snoozeUntil - now) / 1000);
-    char b[40]; snprintf(b, sizeof b, "ALARM SNOOZED  %d:%02d", left / 60, left % 60);
+    char b[40]; snprintf(b, sizeof b, T("ALARM SNOOZED  %d:%02d"), left / 60, left % 60);
     tColor(TH.mfg);
     tCC(b, SCR_W / 2, SCR_H - 14);
   } else if (toastUntil && (int32_t)(toastUntil - now) > 0) {
@@ -1080,7 +1101,7 @@ void drawStatusBar() {
       if (i == page) cv->fillCircle(px, SCR_H - 14, 3, TH.pri); else cv->drawCircle(px, SCR_H - 14, 3, TH.mfg);
     }
   }
-  if (page > 0 && page != PAGE_BATT && !dataLive()) drawWatermark("SEGNALE PERSO");
+  if (page > 0 && page != PAGE_BATT && !dataLive()) drawWatermark(T("SIGNAL LOST"));
   // collision alarm: flashing red frame following the curves of the screen
   if (alertActive && ((now / 500) & 1)) roundRectRing(0, 0, SCR_W, SCR_H, PANEL_CORNER_R, PANEL_CORNER_R, PANEL_CORNER_R, PANEL_CORNER_R, TH.bad, 6);
 }
@@ -1143,13 +1164,13 @@ void pageClock() {
   } else {
     tFont(&F_TEXT);
     tColor(TH.mfg);
-    tCC("NO TIME", cx, cy);
+    tCC(T("NO TIME"), cx, cy);
   }
 
   // date, small, below the dial
   if (ok) {
-    char buf[40];
-    strftime(buf, sizeof buf, "%A  %d %B %Y", &tmv);
+    char buf[48];   // day and month names in the chosen language
+    snprintf(buf, sizeof buf, "%s  %d %s %d", DAYS[cfg.lang][tmv.tm_wday], tmv.tm_mday, MONTHS[cfg.lang][tmv.tm_mon], tmv.tm_year + 1900);
     tFont(&F_TEXT);
     tColor(TH.mfg);
     tCC(buf, cx, cy + R + 36);
@@ -1191,7 +1212,7 @@ void pageWind() {
     pol(cx, cy, R - 54 * k, a, lx, ly);
     String s;
     bool card = (c % 90 == 0);
-    if (c == 0) s = "N"; else if (c == 90) s = "E"; else if (c == 180) s = "S"; else if (c == 270) s = "W";
+    if (c == 0) s = "N"; else if (c == 90) s = "E"; else if (c == 180) s = "S"; else if (c == 270) s = cfg.lang == L_EN ? "W" : "O";
     else { char b[5]; snprintf(b, sizeof b, "%03d", c); s = b; }
     tFont(card ? &F_HEAD : &F_TEXT);
     tColor(card ? TH.pri : TH.fg);
@@ -1218,7 +1239,7 @@ void pageWind() {
   // centre: heading, AWS (apparent), TWS (true)
   tFont(&F_TEXT_S);
   tColor(TH.mfg);
-  tCC("HEADING", cx, cy - 88);
+  tCC(T("HEADING"), cx, cy - 88);
   tFont(&F_HEAD_M);
   tColor(TH.fg);
   if (hdg.ok()) {
@@ -1228,14 +1249,14 @@ void pageWind() {
 
   tFont(&F_TEXT_S);
   tColor(TH.mfg);
-  tCC("AWS  apparent  kn", cx, cy - 40);
+  tCC(T("AWS  apparent  kn"), cx, cy - 40);
   tFont(&F_NUM_L);
   tColor(TH.fg);
   tCC(fv(aws), cx, cy - 12);
 
   tFont(&F_TEXT_S);
   tColor(TH.mfg);
-  tCC("TWS  true  kn", cx, cy + 20);
+  tCC(T("TWS  true  kn"), cx, cy + 20);
   tFont(&F_NUM_L);
   tColor(TH.fg);
   tCC(haveTrue ? String(ts, 1) : String("--"), cx, cy + 50);
@@ -1244,17 +1265,17 @@ void pageWind() {
   {
     const int ly = cy + (int)R + 26, ih = 12;
     tFont(&F_TEXT_S);
-    int w1 = tWidth("Apparent wind"), w2 = tWidth("True wind");
+    int w1 = tWidth(T("Apparent wind")), w2 = tWidth(T("True wind"));
     int total = 12 + 6 + w1 + 22 + 12 + 6 + w2;
     int lx = cx - total / 2;
     cv->fillTriangle(lx + 6, ly - ih / 2 - 1, lx, ly + ih / 2 - 1, lx + 12, ly + ih / 2 - 1, TH.pri);
     tColor(TH.fg);
-    tAt(lx + 18, ly + F_TEXT_S.capH / 2 - 1, "Apparent wind");
+    tAt(lx + 18, ly + F_TEXT_S.capH / 2 - 1, T("Apparent wind"));
     lx += 18 + w1 + 22;
     cv->fillTriangle(lx + 6, ly - ih / 2 - 1, lx, ly + ih / 2 - 1, lx + 12, ly + ih / 2 - 1, TH.yel);
     cv->drawTriangle(lx + 6, ly - ih / 2 - 1, lx, ly + ih / 2 - 1, lx + 12, ly + ih / 2 - 1, TH.fg);
     tColor(TH.fg);
-    tAt(lx + 18, ly + F_TEXT_S.capH / 2 - 1, "True wind");
+    tAt(lx + 18, ly + F_TEXT_S.capH / 2 - 1, T("True wind"));
   }
 
   drawStatusBar();
@@ -1266,9 +1287,9 @@ bool depthAlarming() { return depth.ok() && depth.v < cfg.depthAlarm; }
 void pageSpeedDepth() {
   bool al = depthAlarming();
   const int m = 12, big = PANEL_CORNER_R - m, sm = 12;  // large radius = concentric with the panel corner
-  tile(m, m, SCR_W - 2 * m, 234, "SOG  speed over ground", fv(sog), "kn", TH.pri, &F_NUM_XL, 0, false, big, big, sm, sm);
-  String dl = "DEPTH  below transducer";
-  if (keel.ok()) dl += "   keel " + String(keel.v, 1) + " m";
+  tile(m, m, SCR_W - 2 * m, 234, T("SOG  speed over ground"), fv(sog), "kn", TH.pri, &F_NUM_XL, 0, false, big, big, sm, sm);
+  String dl = T("DEPTH  below transducer");
+  if (keel.ok()) dl += T("   keel ") + String(keel.v, 1) + " m";
   tile(m, 252, SCR_W - 2 * m, 220, dl.c_str(), fv(depth), "m", al ? TH.bad : TH.acc, &F_NUM_XL, al ? TH.bad : TH.fg,
        false, sm, sm, big, big);
   drawStatusBar();
@@ -1291,10 +1312,10 @@ void pageAis() {
   if (n == 0) {
     tFont(&F_HEAD);
     tColor(TH.fg);
-    tCC(ownPosOk() ? "NO AIS TARGETS NEARBY" : "NO OWN POSITION", SCR_W / 2, SCR_H / 2 - 12);
+    tCC(ownPosOk() ? T("NO AIS TARGETS NEARBY") : T("NO OWN POSITION"), SCR_W / 2, SCR_H / 2 - 12);
     tFont(&F_TEXT_S);
     tColor(TH.mfg);
-    tCC(ownPosOk() ? "No boat in collision course or within 3 nm" : "Needs GPS position from NMEA (RMC / GLL / GGA)", SCR_W / 2, SCR_H / 2 + 18);
+    tCC(ownPosOk() ? T("No boat in collision course or within 3 nm") : T("Needs GPS position from NMEA (RMC / GLL / GGA)"), SCR_W / 2, SCR_H / 2 + 18);
     drawStatusBar();
     return;
   }
@@ -1320,8 +1341,8 @@ void pageAis() {
     tAt(xs + tWidth(nm) + 14, b1, d);          // distance next to the name
 
     char l2[64];
-    if (r.tcpa > 0) snprintf(l2, sizeof l2, "CPA %s in %d min    %.1f kn", aisDist(r.cpa).c_str(), (int)lroundf(r.tcpa), r.t->sog);
-    else snprintf(l2, sizeof l2, "Not approaching    %.1f kn", r.t->sog);
+    if (r.tcpa > 0) snprintf(l2, sizeof l2, T("CPA %s in %d min    %.1f kn"), aisDist(r.cpa).c_str(), (int)lroundf(r.tcpa), r.t->sog);
+    else snprintf(l2, sizeof l2, T("Not approaching    %.1f kn"), r.t->sog);
     tFont(&F_TEXT);
     tColor(r.risk ? TH.bad : TH.mfg);
     tCC(l2, SCR_W / 2, y + 64);
@@ -1414,6 +1435,7 @@ void pageBattery() {
 
 // ============================== Menu / editor =============================
 void drawHeader(const char *t) {
+  t = T(t);
   cv->fillRect(0, 0, SCR_W, HEADER_H, TH.pri);
   tFont(&F_HEAD);
   tColor(TH.card);
@@ -1421,34 +1443,45 @@ void drawHeader(const char *t) {
 }
 
 const char *MENU_LABELS[] = {"WiFi network", "WiFi password", "NMEA server IP", "Port", "Depth alarm",
-                             "Collision CPA", "Collision TCPA", "Diagnostics", "Save and restart", "Restart", "Factory reset",
+                             "Collision CPA", "Collision TCPA", "Language", "Diagnostics", "Save and restart", "Restart", "Factory reset",
                              "Power off", "Exit without saving"};
-const int MENU_N = 13;
+const int MENU_N = 14;
+const int MENU_VIS = 11;   // rows that fit between the header and the hint above the keys
+int menuTop = 0;           // first row shown (the list scrolls with the selection)
 
 String menuVal(int i) {
   switch (i) {
-    case 0: return cfg.ssid.length() ? (cfg.ssid.length() > 16 ? cfg.ssid.substring(0, 15) + "." : cfg.ssid) : String("(none)");
-    case 1: { String s; for (size_t k = 0; k < cfg.pass.length() && k < 10; k++) s += '*'; return s.length() ? s : String("(empty)"); }
-    case 2: return cfg.host.length() ? cfg.host : String("(empty)");
+    case 0: return cfg.ssid.length() ? (cfg.ssid.length() > 16 ? cfg.ssid.substring(0, 15) + "." : cfg.ssid) : String(T("(none)"));
+    case 1: { String s; for (size_t k = 0; k < cfg.pass.length() && k < 10; k++) s += '*'; return s.length() ? s : String(T("(empty)")); }
+    case 2: return cfg.host.length() ? cfg.host : String(T("(empty)"));
     case 3: return String(cfg.port);
     case 4: return String(cfg.depthAlarm, 1) + " m";
     case 5: return String(cfg.cpaNm, 2) + " nm";
     case 6: return String(cfg.tcpaMin, 0) + " min";
+    case 7: return LANG_NAMES[cfg.lang];
     default: return "";
   }
 }
 
 void drawMenu() {
   drawHeader("SETTINGS");
-  for (int i = 0; i < MENU_N; i++) {
-    int y = HEADER_H + 6 + i * 32;
+  if (menuSel < menuTop) menuTop = menuSel;
+  if (menuSel >= menuTop + MENU_VIS) menuTop = menuSel - MENU_VIS + 1;
+  for (int i = menuTop; i < MENU_N && i < menuTop + MENU_VIS; i++) {
+    int y = HEADER_H + 6 + (i - menuTop) * 32;
     bool sel = (i == menuSel);
     cv->fillRoundRect(10, y, SCR_W - 20, 28, 8, sel ? TH.pri : TH.card);
     if (!sel) cv->drawRoundRect(10, y, SCR_W - 20, 28, 8, TH.border);
     tFont(&F_TEXT);
     tColor(sel ? TH.card : TH.fg);
-    tAt(22, y + 14 + F_TEXT.capH / 2, MENU_LABELS[i]);
+    tAt(22, y + 14 + F_TEXT.capH / 2, T(MENU_LABELS[i]));
     tR(menuVal(i), SCR_W - 22, y + 14 + F_TEXT.capH / 2);
+  }
+  // more rows above / below: small arrows on the right edge
+  if (menuTop > 0) cv->fillTriangle(SCR_W - 8, HEADER_H + 4, SCR_W - 13, HEADER_H + 10, SCR_W - 3, HEADER_H + 10, TH.mfg);
+  if (menuTop + MENU_VIS < MENU_N) {
+    int yb = HEADER_H + 6 + MENU_VIS * 32 - 2;
+    cv->fillTriangle(SCR_W - 8, yb, SCR_W - 13, yb - 6, SCR_W - 3, yb - 6, TH.mfg);
   }
   hint("Tap the keys below.  After editing, 'Save and restart'.");
 }
@@ -1472,7 +1505,7 @@ void drawEdit() {
   tAt(bx + 8, y, cs);
   tFont(&F_TEXT);
   tColor(TH.mfg);
-  tAt(14, 230, String("Characters: ") + editBuf.length() + " / " + editMax);
+  tAt(14, 230, String(T("Characters: ")) + editBuf.length() + " / " + editMax);
   hint("UP/DOWN: character (hold = fast)   OK: add   BACK: delete",
        "OK hold = confirm      BACK hold = cancel");
 }
@@ -1482,7 +1515,7 @@ void drawScan() {
   if (!scanN) {
     tFont(&F_TEXT);
     tColor(TH.fg);
-    tC("No networks found", SCR_W / 2, 200);
+    tC(T("No networks found"), SCR_W / 2, 200);
   }
   const int rows = 7;
   int first = max(0, min(scanSel - rows / 2, scanN - rows));
@@ -1523,23 +1556,23 @@ void drawDiag() {
   int y = 68;
   const int dy = 22;
   bool wifiOk = WiFi.status() == WL_CONNECTED;
-  tAt(12, y, String("WiFi: ") + wifiStatusStr()); y += dy;
-  tAt(12, y, String("Network: ") + cfg.ssid); y += dy;
+  tAt(12, y, String("WiFi: ") + T(wifiStatusStr())); y += dy;
+  tAt(12, y, String(T("Network: ")) + cfg.ssid); y += dy;
   String ip = wifiOk ? WiFi.localIP().toString() : String("-");
   String rssi = wifiOk ? (String(WiFi.RSSI()) + " dBm") : String("-");
   tAt(12, y, String("IP: ") + ip); y += dy;
   tAt(12, y, String("RSSI: ") + rssi); y += dy;
   String hostS = cfg.host.length() ? cfg.host : String("(not set)");
-  tAt(12, y, String("Server: ") + hostS + ":" + String((int)cfg.port)); y += dy;
+  tAt(12, y, String(T("Server: ")) + hostS + ":" + String((int)cfg.port)); y += dy;
   tAt(12, y, srvUp ? "   CONNECTED" : "   not connected"); y += dy;
-  tAt(12, y, String("Connect tries: ") + String((unsigned long)nConnTry)); y += dy;
-  tAt(12, y, String("Sentences: ") + String((unsigned long)nRx) + "   ok " + String((unsigned long)nOk)); y += dy;
-  tAt(12, y, String("Bad checksum: ") + String((unsigned long)nBadCs) + "   other " + String((unsigned long)nUnknown));
+  tAt(12, y, String(T("Connect tries: ")) + String((unsigned long)nConnTry)); y += dy;
+  tAt(12, y, String(T("Sentences: ")) + String((unsigned long)nRx) + "   ok " + String((unsigned long)nOk)); y += dy;
+  tAt(12, y, String(T("Bad checksum: ")) + String((unsigned long)nBadCs) + T("   other ") + String((unsigned long)nUnknown));
   y += dy;
   tFont(&F_TEXT_S);
   String last = lastLine.length() ? lastLine : String("(nothing received)");
   if (last.length() > 48) last = last.substring(0, 48);
-  tAt(12, y, String("Last: ") + last);
+  tAt(12, y, String(T("Last: ")) + last);
   y += dy;
   tFont(&F_TEXT);
   if (wifiOk) {
@@ -1548,7 +1581,7 @@ void drawDiag() {
   } else { tAt(12, y, "Web: -"); y += dy; }
   if (apOn) {
     tFont(&F_TEXT_S);
-    tAt(12, y, String("Setup WiFi: ") + apName + "  pass " + CONFIG_AP_PASS); y += 18;
+    tAt(12, y, String(T("Setup WiFi: ")) + apName + T("  pass ") + CONFIG_AP_PASS); y += 18;
     tAt(12, y, String("http://") + WiFi.softAPIP().toString());
   }
   hint("No WiFi: 2.4 GHz networks only.",
@@ -1561,12 +1594,12 @@ void drawFactory() {
   tFont(&F_TEXT);
   tColor(TH.fg);
   int y = 96;
-  tAt(14, y, "All settings will be erased:"); y += 32;
-  tAt(26, y, "boat WiFi, NMEA server, alarm,"); y += 24;
-  tAt(26, y, "name, orientation, night mode,"); y += 24;
-  tAt(26, y, "admin password (back to admin)."); y += 40;
-  tAt(14, y, "The device restarts in setup mode:"); y += 24;
-  tAt(14, y, "open WiFi '" SETUP_AP_NAME "'.");
+  tAt(14, y, T("All settings will be erased:")); y += 32;
+  tAt(26, y, T("boat WiFi, NMEA server, alarm,")); y += 24;
+  tAt(26, y, T("name, orientation, night mode,")); y += 24;
+  tAt(26, y, T("admin password (back to admin).")); y += 40;
+  tAt(14, y, T("The device restarts in setup mode:")); y += 24;
+  tAt(14, y, String(T("open WiFi")) + " '" SETUP_AP_NAME "'.");
   hint("OK hold = erase everything and restart.  BACK = cancel.");
 }
 
@@ -1586,23 +1619,25 @@ void drawSetup() {
   tFont(&F_TEXT);
   tColor(TH.fg);
   int y = 82;
-  tAt(14, y, "1. On your phone or PC join the"); y += 22;
-  tAt(14, y, "    open WiFi network:"); y += 40;
+  tAt(14, y, T("1. On your phone or PC join the")); y += 22;
+  tAt(14, y, T("    open WiFi network:")); y += 40;
   tFont(&F_HEAD);
   tColor(TH.pri);
   tC(SETUP_AP_NAME, SCR_W / 2, y); y += 38;
   tFont(&F_TEXT);
   tColor(TH.fg);
-  tAt(14, y, "2. The setup page opens by itself,"); y += 22;
-  tAt(14, y, "    or open  http://192.168.4.1"); y += 32;
-  tAt(14, y, "3. Login: admin    Password: admin"); y += 32;
-  tAt(14, y, "4. Choose the boat WiFi and the"); y += 22;
-  tAt(14, y, "    NMEA server, then Save."); y += 22;
+  tAt(14, y, T("2. The setup page opens by itself,")); y += 22;
+  tAt(14, y, T("    or open  http://192.168.4.1")); y += 32;
+  tAt(14, y, T("3. Login: admin    Password: admin")); y += 32;
+  tAt(14, y, T("4. Choose the boat WiFi and the")); y += 22;
+  tAt(14, y, T("    NMEA server, then Save.")); y += 22;
   hint("OK opens the settings here.  BACK = dashboard.");
 }
 
 // Full-screen message (outside the normal drawing cycle)
 void showMsg(const char *l1, const char *l2 = "") {
+  l1 = T(l1);
+  if (*l2) l2 = T(l2);
   cv->fillScreen(TH.bg);
   tFont(&F_HEAD_L);
   tColor(TH.fg);
@@ -1783,7 +1818,7 @@ void handleKeys(Ev eu, Ev ed, Ev eo, Ev eb) {
     case M_DASH:
       if (eu == EV_SHORT) { page = (page + NUM_PAGES - 1) % NUM_PAGES; dirty = true; }
       if (ed == EV_SHORT) { page = (page + 1) % NUM_PAGES; dirty = true; }
-      if (eo == EV_LONG) { mode = M_MENU; menuSel = 0; dirty = true; }
+      if (eo == EV_LONG) { mode = M_MENU; menuSel = menuTop = 0; dirty = true; }
       if (eb == EV_SHORT) { cfg.night = !cfg.night; applyTheme(); saveCfg(); dirty = true; }
       break;
     case M_MENU:
@@ -1798,12 +1833,19 @@ void handleKeys(Ev eu, Ev ed, Ev eo, Ev eb) {
           case 4: startEdit(E_ALARM); break;
           case 5: startEdit(E_CPA); break;
           case 6: startEdit(E_TCPA); break;
-          case 7: mode = M_DIAG; dirty = true; break;
-          case 8: saveCfg(); showMsg("Saved", "Restarting..."); delay(800); ESP.restart(); break;
-          case 9: showMsg("Restarting...", ""); delay(300); ESP.restart(); break;
-          case 10: mode = M_FACTORY; dirty = true; break;
-          case 11: powerOff(); break;
-          case 12: loadCfg(); applyTheme(); mode = M_DASH; dirty = true; break;
+          case 7: {   // language: next one, applied and saved at once
+            cfg.lang = (cfg.lang + 1) % L_COUNT;
+            prefs.begin("essview", false);
+            prefs.putUChar("lang", cfg.lang);
+            prefs.end();
+            break;
+          }
+          case 8: mode = M_DIAG; dirty = true; break;
+          case 9: saveCfg(); showMsg("Saved", "Restarting..."); delay(800); ESP.restart(); break;
+          case 10: showMsg("Restarting...", ""); delay(300); ESP.restart(); break;
+          case 11: mode = M_FACTORY; dirty = true; break;
+          case 12: powerOff(); break;
+          case 13: loadCfg(); applyTheme(); mode = M_DASH; dirty = true; break;
         }
       }
       if (eb) { loadCfg(); applyTheme(); mode = M_DASH; dirty = true; }
@@ -1912,7 +1954,7 @@ void screenSet(bool on) {
   else lcd->displayOff();
 }
 bool snoozed() { return snoozeUntil && (int32_t)(snoozeUntil - millis()) > 0; }
-void showToast(const char *m, uint32_t ms = 3000) { toastMsg = m; toastUntil = millis() + ms; dirty = true; }
+void showToast(const char *m, uint32_t ms = 3000) { toastMsg = T(m); toastUntil = millis() + ms; dirty = true; }
 // External vibration motor (optional, the board has none): pulses while an alarm is active.
 bool vibNow = false;          // pin currently driven high
 uint32_t vibT = 0, vibTestUntil = 0;

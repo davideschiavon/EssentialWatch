@@ -2,7 +2,7 @@
 
 A marine instrument watch: NMEA 0183 wind / speed / depth, AIS collision warning, clock and battery,
 on the **Waveshare ESP32-S3-Touch-AMOLED-2.06** (410x502 AMOLED, FT3168 touch).
-Ported from EssentialView (e-ink).
+Ported from EssentialView (e-ink). Languages: English, French, Spanish (watch menu Settings > Language, or the web page).
 
 ## Pages (swipe left / right)
 

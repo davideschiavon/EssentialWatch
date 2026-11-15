@@ -26,6 +26,7 @@ import random
 import re
 import socket
 import sys
+import queue
 import threading
 import time
 import urllib.error
@@ -302,9 +303,12 @@ class Server:
 
     def start(self, port):
         self.sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        if hasattr(socket, "SO_EXCLUSIVEADDRUSE"):   # Windows: a second simulator on the same port gets an error
+            self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE, 1)
+        else:
+            self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         self.sock.bind(("0.0.0.0", port))
-        self.sock.listen(4)
+        self.sock.listen(8)
         self.running = True
         threading.Thread(target=self._accept, daemon=True).start()
         threading.Thread(target=self._send, daemon=True).start()
@@ -323,16 +327,23 @@ class Server:
                 c, addr = self.sock.accept()
             except OSError:
                 break
-            c.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
-            with self.lock:
-                self.clients.append(c)
-                self.ips[c] = addr[0]
-            self.log(f"client connected: {addr[0]}")
+            try:
+                c.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+                with self.lock:
+                    self.clients.append(c)
+                    self.ips[c] = addr[0]
+                self.log(f"client connected: {addr[0]}")
+            except Exception as e:
+                self.log(f"client error: {e}")
 
     def _send(self):
         while self.running:
-            self.sim.step(1.0)
-            data = self.sim.sentences().encode("ascii")
+            try:
+                self.sim.step(1.0)
+                data = self.sim.sentences().encode("ascii")
+            except Exception as e:   # never let one bad step stop the data
+                self.log(f"simulation error: {e}")
+                data = b""
             with self.lock:
                 for c in list(self.clients):
                     try:
@@ -406,6 +417,8 @@ def rgb565_image(w, h, b64):
     """Screen copy sent by the firmware: half size, RGB565 big-endian, base64."""
     from PIL import Image
     raw = base64.b64decode(b64)
+    if len(raw) != w * h * 2:   # bytes lost on the USB link: the colours would be shifted
+        raise ValueError(f"incomplete copy ({len(raw)} of {w * h * 2} bytes)")
     out = bytearray(w * h * 3)
     for n in range(min(w * h, len(raw) // 2)):
         v = (raw[2 * n] << 8) | raw[2 * n + 1]
@@ -470,6 +483,8 @@ class SerialLink:
                             self._img_evt.set()
                         except Exception as e:
                             self.on_line(f"screen copy damaged: {e}")
+                            self._img = None   # the caller keeps the previous picture
+                            self._img_evt.set()
                         shot = None
                     elif self.B64.match(line):
                         shot[2].append(line)
@@ -543,6 +558,21 @@ def run_gui(args):
 
     sim = Sim()
     root = tk.Tk()
+    ui_q = queue.Queue()   # UI updates from the worker threads (server, USB, HTTP): run by pump() in the Tk thread
+
+    def ui(fn):
+        ui_q.put(fn)
+
+    def pump():
+        try:
+            while True:
+                ui_q.get_nowait()()
+        except queue.Empty:
+            pass
+        except Exception as e:
+            print("UI error:", e, file=sys.stderr)
+        root.after(100, pump)
+    root.after(100, pump)
     root.title("EssentialWatch Simulator")
     root.geometry("1100x780")
     logbox = tk.Text(root, height=6, state="disabled", font=("Consolas", 9))
@@ -559,7 +589,7 @@ def run_gui(args):
             logbox.insert("end", time.strftime("%H:%M:%S ") + s + "\n")
             logbox.see("end")
             logbox.config(state="disabled")
-        root.after(0, w)
+        ui(w)
 
     server = Server(sim, log)
     api = WatchApi()
@@ -589,7 +619,8 @@ def run_gui(args):
             try:
                 server.start(int(port_v.get()))
             except (OSError, ValueError) as e:
-                log(f"cannot start: {e}")
+                busy = isinstance(e, OSError) and e.errno in (98, 10048, 10013)
+                log(f"cannot start: port {port_v.get()} is already used (another simulator still open?)" if busy else f"cannot start: {e}")
                 return
             srv_btn.config(text="Stop")
             log(f"server on {local_ip()}:{port_v.get()}")
@@ -695,7 +726,7 @@ def run_gui(args):
                 con_box.delete("1.0", "100.0")
             con_box.see("end")
             con_box.config(state="disabled")
-        root.after(0, w)
+        ui(w)
 
     def bg(fn, done):
         def run():
@@ -703,7 +734,7 @@ def run_gui(args):
                 r, e = fn(), None
             except Exception as ex:
                 r, e = None, ex
-            root.after(0, lambda: done(r, e))
+            ui(lambda: done(r, e))
         threading.Thread(target=run, daemon=True).start()
 
     def usb_link():

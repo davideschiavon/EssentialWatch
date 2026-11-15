@@ -25,7 +25,12 @@ FALLBACK = {DISPLAY: os.path.join(FONTS, "DejaVuSans-Bold.ttf"), TEXT: os.path.j
 
 ASCII = [chr(c) for c in range(0x20, 0x7F)]
 DEGREE = "°"
-FULL = ASCII + [DEGREE]
+# Accented letters and marks of the French and Spanish texts (EssentialViewS3/lang.h): taken from that file,
+# so a new translation only needs this script to be run again. The letters the Essentialsail fonts lack
+# (the fonts only have the Italian accents) come from DejaVu Sans.
+LANG_H = os.path.join(HERE, "..", "EssentialViewS3", "lang.h")
+EXTRA = sorted({ch for ch in open(LANG_H, encoding="utf-8").read() if ord(ch) > 0x7E and ch != DEGREE})
+FULL = ASCII + [DEGREE] + EXTRA
 DIGITS = list(" 0123456789.-+:") + [DEGREE]
 
 # name, file, height in pixels (body), characters
