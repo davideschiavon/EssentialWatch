@@ -6,6 +6,9 @@
 #include <ESPmDNS.h>
 #include <ArduinoJson.h>
 #include <Update.h>
+#include <HTTPClient.h>
+#include <NetworkClientSecure.h>
+#include "mbedtls/sha256.h"
 #include <DNSServer.h>
 #include "webpage.h"
 
@@ -308,6 +311,70 @@ void otaUpload() {
   }
 }
 
+// Aggiornamento dall'orologio stesso: scarica il firmware dalle Release GitHub di questo progetto (HTTPS con certificato
+// verificato, SHA-256 controllato) e lo installa. Il browser non puo' scaricarlo (GitHub non invia le intestazioni CORS).
+String fwFromUrl(const String &url, const String &sha256hex) {
+  const String prefix = "https://github.com/davideschiavon/EssentialWatch/releases/download/";
+  if (!url.startsWith(prefix)) return "only firmware from the EssentialWatch GitHub releases can be installed";
+  if (WiFi.status() != WL_CONNECTED) return "the watch is not connected to a WiFi network";
+  if (!clockValid()) return "the watch clock is not set (needed for HTTPS): set the date and time first";
+  showMsg("Downloading firmware", "from GitHub...");
+  NetworkClientSecure client;   // senza altre impostazioni usa i certificati radice integrati: la catena viene verificata
+  HTTPClient http;
+  http.setFollowRedirects(HTTPC_STRICT_FOLLOW_REDIRECTS);
+  http.setTimeout(15000);
+  http.setUserAgent("EssentialWatch");
+  if (!http.begin(client, url)) return "cannot start the download";
+  int code = http.GET();
+  if (code != 200) {
+    String e = "GitHub answered " + String(code) + (code < 0 ? " (" + http.errorToString(code) + ")" : String(""));
+    http.end();
+    return e;
+  }
+  int len = http.getSize();
+  if (!Update.begin(len > 0 ? (size_t)len : UPDATE_SIZE_UNKNOWN, U_FLASH)) { String e = Update.errorString(); http.end(); return e; }
+  WiFiClient *st = http.getStreamPtr();
+  mbedtls_sha256_context sh;
+  mbedtls_sha256_init(&sh);
+  mbedtls_sha256_starts(&sh, 0);
+  static uint8_t buf[1024];
+  size_t total = 0;
+  uint32_t lastData = millis();
+  bool first = true;
+  String err = "";
+  while (http.connected() && (len < 0 || total < (size_t)len)) {
+    size_t av = st->available();
+    if (!av) {
+      if (millis() - lastData > 20000) { err = "download timed out"; break; }
+      delay(2);
+      continue;
+    }
+    int n = st->readBytes(buf, min(av, sizeof buf));
+    if (n <= 0) continue;
+    lastData = millis();
+    if (first) { first = false; if (buf[0] != 0xE9) { err = "not an ESP32 firmware file (.bin)"; break; } }
+    if (Update.write(buf, n) != (size_t)n) { err = Update.errorString(); break; }
+    mbedtls_sha256_update(&sh, buf, n);
+    total += n;
+  }
+  uint8_t hash[32];
+  mbedtls_sha256_finish(&sh, hash);
+  mbedtls_sha256_free(&sh);
+  http.end();
+  if (!err.length() && len > 0 && total != (size_t)len) err = "download incomplete";
+  if (!err.length() && sha256hex.length()) {
+    char hx[65];
+    for (int i = 0; i < 32; i++) sprintf(hx + 2 * i, "%02x", hash[i]);
+    String want = sha256hex;
+    want.toLowerCase();
+    if (want != String(hx)) err = "checksum mismatch: the file was rejected";
+  }
+  if (err.length()) { Update.abort(); return err; }
+  if (!Update.end(true)) return Update.errorString();
+  Serial.printf("OTA from GitHub: %u bytes written\n", (unsigned)total);
+  return "";
+}
+
 void webSetup() {
   web.on("/", HTTP_GET, [] {
     if (!webAuth()) return;
@@ -359,6 +426,17 @@ void webSetup() {
       ESP.restart();
     }
   }, [] { otaUpload(); });
+  web.on("/api/fwurl", HTTP_POST, [] {
+    if (!webAuth()) return;
+    JsonDocument d;
+    if (deserializeJson(d, web.arg("plain"))) { sendJson(errJson("invalid JSON"), 400); return; }
+    String err = fwFromUrl(String(d["url"] | ""), String(d["sha256"] | ""));
+    if (err.length()) { dirty = true; sendJson(errJson(err), 400); return; }
+    sendJson(okJson(true));
+    showMsg("Firmware updated", "Restarting...");
+    delay(500);
+    ESP.restart();
+  });
   web.onNotFound([] {
     if (apOn && web.hostHeader() != WiFi.softAPIP().toString()) {  // richieste "captive portal" dei telefoni
       web.sendHeader("Location", String("http://") + WiFi.softAPIP().toString() + "/");

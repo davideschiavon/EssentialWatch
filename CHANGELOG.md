@@ -2,6 +2,10 @@
 
 Every version is published as a GitHub Release (firmware .bin + these notes); the watch web page lists them.
 
+## 2.2.2
+
+- Firmware search: the watch now downloads the firmware from GitHub itself (certificate checked, SHA-256 verified), because browsers cannot download GitHub release files (CORS). The watch needs a WiFi with Internet.
+
 ## 2.2.1
 
 - Battery page: the percentage inside the battery icon is 50% smaller.

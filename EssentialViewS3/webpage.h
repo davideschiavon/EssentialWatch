@@ -236,14 +236,17 @@ $('fwfind').onclick=async()=>{const m=$('fwmsg');m.textContent='Searching GitHub
    o.textContent=(x.name||x.tag_name)+(i==0?'  (latest)':'')+(cfg.fw&&cfg.fw.startsWith(v)?'  (installed)':'');sel.appendChild(o)});
   sel.disabled=false;$('fwgo').disabled=false;relShow();
   m.textContent=`${rels.length} firmware found. Pick one, read the changelog, then install.`;m.className='hint'}
- catch(e){m.textContent='Cannot reach GitHub ('+e.message+'). The computer needs Internet access; you can install a .bin file instead.';m.className='warn'}
+ catch(e){m.textContent='Cannot reach GitHub ('+e.message+'). The computer needs Internet access to list them; you can also install a .bin file.';m.className='warn'}
  $('fwfind').disabled=false};
 $('fwgo').onclick=async()=>{const r=rels[$('fwsel').selectedIndex],m=$('fwmsg');if(!r)return;const a=relAsset(r);
- if(!confirm(`Install ${r.name||r.tag_name}? The device restarts at the end. Settings are kept.`))return;
- m.textContent='Downloading from GitHub...';m.className='hint';
- try{const d=await fetch(a.url,{headers:{Accept:'application/octet-stream'}});if(!d.ok)throw new Error('download '+d.status);
-  fwUpload(await d.blob(),a.name)}
- catch(e){m.innerHTML='Download from GitHub failed ('+e.message+'). Download <a href="'+a.browser_download_url+'" target="_blank">'+a.name+'</a> and use "Install a .bin file".';m.className='warn'}};
+ if(!confirm(`Install ${r.name||r.tag_name}? The watch downloads it from GitHub (it needs a WiFi with Internet), then restarts. Settings are kept.`))return;
+ m.textContent='The watch is downloading the firmware from GitHub (about 30-60 s)...';m.className='hint';$('fwgo').disabled=true;
+ try{const x=await fetch(U('/api/fwurl'),{method:'POST',headers:{'Content-Type':'application/json'},
+   body:JSON.stringify({url:a.browser_download_url,sha256:(a.digest||'').replace(/^sha256:/,'')})});
+  const j=await x.json();
+  if(j.ok){m.textContent='Installed. The watch is restarting: this page reloads in 30 s.';m.className='hint';setTimeout(()=>location.reload(),30000)}
+  else{m.innerHTML='Install failed: '+j.error+'. You can also download <a href="'+a.browser_download_url+'" target="_blank">'+a.name+'</a> and use "Install a .bin file".';m.className='warn';$('fwgo').disabled=false}}
+ catch(e){m.textContent='Connection lost: the watch is probably restarting. This page reloads in 30 s.';m.className='hint';setTimeout(()=>location.reload(),30000)}};
 // ora
 async function setTime(ms){const r=await api('/api/config',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({epoch:Math.round(ms/1000)})});
  msg(r.ok?'Time set.':r.error,!!r.ok);status()}
