@@ -34,6 +34,7 @@ String cfgJson() {
   d["tz"] = cfg.tz;
   d["bright"] = cfg.bright;
   d["webuser"] = WEB_USER;
+  d["vib"] = cfg.vibPin;
   d["webpass_default"] = cfg.webpass == WEB_DEFAULT_PASS;
   d["fw"] = FW_VERSION;
   String s;
@@ -99,6 +100,7 @@ String statusJson() {
     d["pwr"] = digitalRead(PWR_PIN);
     d["boot"] = digitalRead(BOOT_PIN);
     d["alert"] = alertActive;
+  d["vib"] = cfg.vibPin; d["vibon"] = vibNow;
     d["snooze"] = snoozed() ? (int)((snoozeUntil - millis()) / 1000) : 0;
     d["screen"] = screenOn;
   }
@@ -131,7 +133,7 @@ String scanJson() {
 
 // Applies the keys present in the JSON (missing ones stay as they are), saves to memory.
 // "pass"/"webpass" present = new passwords (even empty). Returns "" if ok, otherwise the error.
-String applyCfg(const String &body, bool &needRestart) {
+String applyCfg(const String &body, bool &needRestart, bool fromWeb = false) {
   JsonDocument d;
   if (deserializeJson(d, body)) return "invalid JSON";
   if (hostTemp) {  // a save closes the temporary redirection of the test bench
@@ -176,7 +178,18 @@ String applyCfg(const String &body, bool &needRestart) {
   if (d["webpass"].is<const char *>()) {
     String w = d["webpass"].as<String>();
     if (w.length() < 4 || w.length() > 32) return "web password: 4-32 characters";
+    if (fromWeb && w == WEB_DEFAULT_PASS) return "choose a password different from the default one";
     n.webpass = w;
+  }
+
+  int8_t vibNew = cfg.vibPin;
+  if (!d["vib"].isNull()) {   // optional external vibration motor driver: only free GPIOs of the board pads
+    int v = d["vib"].as<int>();
+    static const int8_t okPins[] = {1, 2, 3, 17, 18, 21, 43, 44, 47, 48};
+    bool good = v == -1;
+    for (int8_t o : okPins) if (o == v) good = true;
+    if (!good) return "vibration pin: -1 (none) or one of GPIO 1 2 3 17 18 21 43 44 47 48";
+    vibNew = v;
   }
 
   long long newEpoch = 0;
@@ -188,6 +201,7 @@ String applyCfg(const String &body, bool &needRestart) {
   bool srvChanged = n.host != cfg.host || n.port != cfg.port;
   bool look = n.night != cfg.night || n.rot != cfg.rot;
   cfg = n;
+  if (vibNew != cfg.vibPin) vibSetPin(vibNew);   // releases the old pin, drives the new one low
   saveCfg();
   applyTz();
   if (newEpoch) setClockEpoch((time_t)newEpoch);
@@ -210,6 +224,7 @@ bool sendKeyName(const String &k) {
   else if (k == "dtap") handleKeys(EV_NONE, EV_NONE, EV_NONE, EV_SHORT);
   else if (k == "power") pwrShortPress();
   else if (k == "boot") snoozeAlarm();
+  else if (k == "vibtest") { if (cfg.vibPin < 0) return false; vibTest(); }
   else return false;
   return true;
 }
@@ -240,17 +255,125 @@ void configCmd(const String &c) {
   } else Serial.println("CFG_ERR " + errJson("unknown command"));
 }
 
-// ---------- web page ----------
-// Login always required over the network (user admin). Not over USB: physical access, used to recover the password.
-bool webAuth() {
-  if (web.authenticate(WEB_USER, cfg.webpass.c_str())) return true;
-  web.requestAuthentication(BASIC_AUTH, "EssentialWatch");
-  return false;
-}
-
 void sendJson(const String &s, int code = 200) {
   web.sendHeader("Cache-Control", "no-store");
   web.send(code, "application/json", s);
+}
+
+// ---------- web page ----------
+// Login always required over the network (user admin). Not over USB: physical access, used to recover the password.
+// HTTP Digest authentication (RFC 2617, qop=auth): the password never travels on the network, only a hash tied to a
+// server nonce. The nonce stays valid for a while (not renewed at every 401), so parallel browser requests do not
+// invalidate each other. Wrong logins are counted per client IP and lock that IP out for a growing time.
+#define AUTH_REALM "EssentialWatch"
+#define AUTH_NONCE_MS 600000UL     // a nonce (and the previous one) is accepted for 10-20 minutes
+#define AUTH_MAX_FAILS 5           // wrong logins before the lock-out
+#define AUTH_LOCK_MS 30000UL       // first lock-out 30 s, doubling at each new lock-out up to about 16 minutes
+enum AuthRes { AUTH_NONE, AUTH_STALE, AUTH_BAD, AUTH_LOCKED, AUTH_OK };
+struct AuthTrack { uint32_t ip = 0; uint8_t fails = 0, level = 0; uint32_t lockUntil = 0, seen = 0; };
+AuthTrack authTracks[4];
+String authNonce, authNoncePrev;
+uint32_t authNonceT = 0;
+
+String randHex32() {
+  char b[33];
+  for (int i = 0; i < 4; i++) snprintf(b + i * 8, 9, "%08x", (unsigned)esp_random());
+  return String(b);
+}
+String md5hex(const String &s) { MD5Builder m; m.begin(); m.add(s); m.calculate(); return m.toString(); }
+
+// value of key=... in the Authorization header (quoted or not); "nonce" must not match "cnonce"
+String dgParam(const String &h, const char *key) {
+  String k = String(key) + "=";
+  int from = 0;
+  for (;;) {
+    int i = h.indexOf(k, from);
+    if (i < 0) return "";
+    if (i == 0 || h[i - 1] == ' ' || h[i - 1] == ',') {
+      int s = i + k.length();
+      if (s < (int)h.length() && h[s] == '"') { int e = h.indexOf('"', s + 1); return e < 0 ? String("") : h.substring(s + 1, e); }
+      int e = h.indexOf(',', s);
+      if (e < 0) e = h.length();
+      String v = h.substring(s, e);
+      v.trim();
+      return v;
+    }
+    from = i + 1;
+  }
+}
+
+AuthTrack *authTrackFor(uint32_t ip) {
+  AuthTrack *free_ = &authTracks[0];
+  for (auto &t : authTracks) {
+    if (t.ip == ip) { t.seen = millis(); return &t; }
+    if (t.seen < free_->seen || !t.ip) free_ = &t;
+  }
+  *free_ = AuthTrack();
+  free_->ip = ip; free_->seen = millis();
+  return free_;
+}
+
+AuthRes digestCheck() {
+  if (!web.hasHeader("Authorization")) return AUTH_NONE;
+  String h = web.header("Authorization");
+  if (!h.startsWith("Digest ")) return AUTH_BAD;   // Basic (clear-text password) is not accepted any more
+  h = h.substring(7);
+  String user = dgParam(h, "username"), realm = dgParam(h, "realm"), nonce = dgParam(h, "nonce"), uri = dgParam(h, "uri");
+  String resp = dgParam(h, "response"), nc = dgParam(h, "nc"), cn = dgParam(h, "cnonce"), qop = dgParam(h, "qop");
+  if (!nonce.length() || !resp.length() || !user.length()) return AUTH_BAD;
+  if (nonce != authNonce && nonce != authNoncePrev) return AUTH_STALE;
+  String path = uri;
+  int q = path.indexOf('?');
+  if (q >= 0) path = path.substring(0, q);
+  if (path != web.uri() || realm != AUTH_REALM) return AUTH_BAD;
+  const char *m = web.method() == HTTP_POST ? "POST" : web.method() == HTTP_PUT ? "PUT" : web.method() == HTTP_DELETE ? "DELETE" : "GET";
+  String ha1 = md5hex(user + ":" + AUTH_REALM + ":" + cfg.webpass);
+  String ha2 = md5hex(String(m) + ":" + uri);
+  String expect = qop == "auth" ? md5hex(ha1 + ":" + nonce + ":" + nc + ":" + cn + ":auth:" + ha2) : md5hex(ha1 + ":" + nonce + ":" + ha2);
+  resp.toLowerCase();
+  bool ok = user.equalsConstantTime(WEB_USER) && resp.equalsConstantTime(expect);
+  return ok ? AUTH_OK : AUTH_BAD;
+}
+
+// Checks the login of the current request (also counts failures / enforces the lock-out). Sends nothing.
+AuthRes authEval() {
+  uint32_t now = millis();
+  if (authNonce.isEmpty() || now - authNonceT > AUTH_NONCE_MS) { authNoncePrev = authNonce; authNonce = randHex32(); authNonceT = now; }
+  AuthTrack *t = authTrackFor((uint32_t)web.client().remoteIP());
+  if (t->lockUntil && (int32_t)(t->lockUntil - now) > 0) return AUTH_LOCKED;
+  AuthRes r = digestCheck();
+  if (r == AUTH_OK) { t->fails = 0; t->level = 0; t->lockUntil = 0; }
+  else if (r == AUTH_BAD && ++t->fails >= AUTH_MAX_FAILS) {
+    t->fails = 0;
+    t->lockUntil = now + (AUTH_LOCK_MS << t->level);
+    if (!t->lockUntil) t->lockUntil = 1;
+    Serial.printf("Web login: too many wrong passwords, client locked out for %u s\n", (unsigned)((AUTH_LOCK_MS << t->level) / 1000));
+    if (t->level < 5) t->level++;
+  }
+  return r;
+}
+
+void authReject(AuthRes r) {
+  if (r == AUTH_LOCKED) {
+    web.sendHeader("Retry-After", "30");
+    web.send(429, "text/plain", "Too many wrong passwords. Try again in a few minutes.");
+    return;
+  }
+  String c = String("Digest realm=\"" AUTH_REALM "\", qop=\"auth\", algorithm=MD5, nonce=\"") + authNonce + "\", opaque=\"essentialwatch\"";
+  if (r == AUTH_STALE) c += ", stale=true";
+  web.sendHeader("WWW-Authenticate", c);
+  web.send(401, "text/plain", "Login required");
+}
+
+bool defaultPass() { return cfg.webpass == WEB_DEFAULT_PASS; }
+const char *PASS_FIRST_MSG = "change the default administrator password first (Administrator login, then Save)";
+
+// allowDefault: the few pages needed to set the first password work even while the password is still "admin"
+bool webAuth(bool allowDefault = false) {
+  AuthRes r = authEval();
+  if (r != AUTH_OK) { authReject(r); return false; }
+  if (!allowDefault && defaultPass()) { sendJson(errJson(PASS_FIRST_MSG), 403); return false; }
+  return true;
 }
 
 // Screen as a 24-bit BMP read from the RGB565 drawing buffer: 410x502, or 205x251 with ?half=1
@@ -286,13 +409,15 @@ void sendScreenBmp() {
 
 // ---------- firmware update ----------
 bool otaAuthOk = false;
+AuthRes otaRes = AUTH_NONE;
 String otaErr;
 size_t otaBytes = 0;
 
 void otaUpload() {
   HTTPUpload &up = web.upload();
   if (up.status == UPLOAD_FILE_START) {
-    otaAuthOk = web.authenticate(WEB_USER, cfg.webpass.c_str());
+    otaRes = authEval();
+    otaAuthOk = otaRes == AUTH_OK && !defaultPass();
     otaErr = "";
     otaBytes = 0;
     if (!otaAuthOk) return;
@@ -499,17 +624,19 @@ String nmeaScanJson() {
 
 void webSetup() {
   web.on("/", HTTP_GET, [] {
-    if (!webAuth()) return;
+    if (!webAuth(true)) return;
     web.send_P(200, "text/html; charset=utf-8", WEB_PAGE);
   });
-  web.on("/api/config", HTTP_GET, [] { if (webAuth()) sendJson(cfgJson()); });
+  web.on("/api/config", HTTP_GET, [] { if (webAuth(true)) sendJson(cfgJson()); });
   web.on("/api/config", HTTP_POST, [] {
-    if (!webAuth()) return;
+    if (!webAuth(true)) return;
+    // while the password is still the default one, the only thing that can be saved is a new password
+    if (defaultPass() && web.arg("plain").indexOf("\"webpass\"") < 0) { sendJson(errJson(PASS_FIRST_MSG), 403); return; }
     bool r = false;
-    String e = applyCfg(web.arg("plain"), r);
+    String e = applyCfg(web.arg("plain"), r, true);
     sendJson(e.length() ? errJson(e) : okJson(r), e.length() ? 400 : 200);
   });
-  web.on("/api/status", HTTP_GET, [] { if (webAuth()) sendJson(statusJson()); });
+  web.on("/api/status", HTTP_GET, [] { if (webAuth(true)) sendJson(statusJson()); });
   web.on("/api/scan", HTTP_GET, [] { if (webAuth()) sendJson(scanJson()); });
   web.on("/api/restart", HTTP_POST, [] {
     if (!webAuth()) return;
@@ -538,7 +665,7 @@ void webSetup() {
   web.on("/screen.bmp", HTTP_GET, [] { if (webAuth()) sendScreenBmp(); });
   // firmware update (OTA): multipart POST with the firmware.bin file
   web.on("/api/update", HTTP_POST, [] {
-    if (!otaAuthOk) { web.requestAuthentication(BASIC_AUTH, "EssentialView"); return; }
+    if (!otaAuthOk) { if (otaRes == AUTH_OK) sendJson(errJson(PASS_FIRST_MSG), 403); else authReject(otaRes); return; }
     bool ok = !otaErr.length() && !Update.hasError();
     sendJson(ok ? okJson(true) : errJson(otaErr.length() ? otaErr : String(Update.errorString())), ok ? 200 : 400);
     if (ok) {

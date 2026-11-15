@@ -2,6 +2,14 @@
 
 Every version is published as a GitHub Release (firmware .bin + these notes); the watch web page lists them.
 
+## 2.4.0
+
+- Web login hardening: HTTP **Digest** authentication replaces Basic (the password no longer travels in clear text); clients that only speak Basic (old scripts: use `curl --digest`) are refused.
+- The factory password `admin` must be changed at the first login: until then only a new password can be saved (the new password cannot be `admin`).
+- After 5 wrong passwords a client IP is locked out for 30 s, doubling at each new lock-out (up to about 16 minutes).
+- Vibration: the output pin of an external motor is now set from the web page (GPIO 1, 2, 3, 17, 18, 21, 43, 44, 47, 48) with a "Test vibration" button. The pulses were verified against a simulated collision (300 ms every 1.5 s, stopped by the BOOT snooze). The board itself has no motor.
+- Status page JSON reports `vib` (pin) and `vibon` (pulse active).
+
 ## 2.3.0
 
 - Web page: **Search NMEA server** scans the WiFi network of the watch (ports 10110, 10111, 10112, 2000, 4242, 3000), checks that the port really sends NMEA sentences and fills in the IP address and port.

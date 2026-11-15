@@ -101,9 +101,13 @@ legend{font-family:"Baloo 2",system-ui,sans-serif;font-weight:700;color:var(--pr
 </fieldset>
 <fieldset><legend>Device</legend>
  <label for="name">Name (web address http://name.local)</label><input id="name" maxlength="24">
+ <label for="vib">Vibration motor GPIO (-1 = none)</label>
+ <div class="row"><div><input id="vib" type="number" min="-1" max="48" step="1"></div>
+ <div><button class="btn alt" type="button" id="vibtest">Test vibration</button></div></div>
+ <div class="hint">The board has no motor: connect an external one through a transistor to a free pad (GPIO 1, 2, 3, 17, 18, 21, 43, 44, 47 or 48). It pulses during a collision or depth alarm.</div>
 </fieldset>
 <fieldset><legend>Administrator login</legend>
- <div class="hint">User <b>admin</b>. <span id="pwdef"></span></div>
+ <div class="hint">User <b>admin</b>. <span id="pwdef"></span> The page uses a hashed (Digest) login; after 5 wrong passwords the client is locked out for a while.</div>
  <div class="row"><div><label for="webpass">New password</label><input id="webpass" type="password" autocomplete="new-password" placeholder="(unchanged)"></div>
  <div><label for="webpass2">Repeat</label><input id="webpass2" type="password" autocomplete="new-password"></div></div>
 </fieldset>
@@ -174,14 +178,18 @@ async function load(){cfg=await api('/api/config');
  for(const k of['ssid','host','port','dalarm','name','tz'])$(k).value=cfg[k];
  $('rot').value=cfg.rot;$('night').checked=cfg.night;$('pass').value='';$('webpass').value='';
  $('pass').placeholder=cfg.pass_set?'(unchanged)':'(none)';$('webpass2').value='';$('fwv').textContent=cfg.fw;
- $('pwdef').innerHTML=cfg.webpass_default?'<span class="warn">The password is still the default one (admin): change it.</span>':'';
+ $('vib').value=cfg.vib;
+ $('pwdef').innerHTML=cfg.webpass_default?'<span class="warn">The password is still the default one (admin): set a new one to unlock the page.</span>':'';
+ if(cfg.webpass_default){$('webpass').focus();msg('Set a new administrator password and press Save: the other functions stay locked until you do.',false)}
  $('openn').checked=false}
 async function save(andRestart){
- const b={name:$('name').value.trim(),ssid:$('ssid').value,host:$('host').value.trim(),
+ if(cfg&&cfg.webpass_default&&!$('webpass').value){msg('Set a new administrator password first (not "admin").',false);return}
+ const b={name:$('name').value.trim(),vib:+$('vib').value,ssid:$('ssid').value,host:$('host').value.trim(),
   port:+$('port').value,dalarm:+$('dalarm').value,tz:$('tz').value.trim(),night:$('night').checked,rot:+$('rot').value};
  if($('openn').checked)b.pass='';else if($('pass').value)b.pass=$('pass').value;
  if($('webpass').value){if($('webpass').value!==$('webpass2').value){msg('The two passwords are different',false);return}
   b.webpass=$('webpass').value}
+ if(cfg.webpass_default){for(const k of Object.keys(b))if(k!=='webpass')delete b[k]}   // only the password is accepted while it is the default one
  const r=await api('/api/config',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(b)});
  if(!r.ok){msg(r.error,false);return}
  if(andRestart){await restart(b.name);return}
@@ -210,6 +218,7 @@ $('scan').onclick=async()=>{$('scan').disabled=true;$('scan').textContent='...';
  try{const l=await api('/api/scan');$('nets').innerHTML=l.map(n=>`<option value="${n.ssid}">${n.rssi} dBm${n.open?' open':''}</option>`).join('');
  msg(`${l.length} networks found: pick one in the Network field.`,true)}catch(e){msg('Scan failed',false)}
  $('scan').disabled=false;$('scan').textContent='Scan'};
+$('vibtest').onclick=async()=>{const r=await api('/api/key?k=vibtest',{method:'POST'});msg(r.ok?'Vibration test: 3 pulses.':'Set a GPIO and press Save first.',!!r.ok)};
 document.querySelectorAll('[data-k]').forEach(b=>b.onclick=async()=>{await fetch(U('/api/key?k='+b.dataset.k),{method:'POST'});setTimeout(shot,1500)});
 function fwUpload(blob,name){const m=$('fwmsg');
  const fd=new FormData();fd.append('firmware',blob,name);const x=new XMLHttpRequest();

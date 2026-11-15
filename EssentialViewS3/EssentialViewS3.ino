@@ -91,6 +91,7 @@ struct Settings {
   String webpass;     // web page password (user WEB_USER), never empty
   uint8_t bright = 100;   // screen brightness, 5-100 %
   String tz;          // POSIX time zone, e.g. "CET-1CEST,M3.5.0,M10.5.0/3"
+  int8_t vibPin = VIB_PIN;   // GPIO of an external vibration motor driver (-1 = none)
 } cfg;
 
 void loadCfg() {
@@ -108,6 +109,7 @@ void loadCfg() {
   cfg.bright = constrain((int)prefs.getUChar("bright", 100), 5, 100);
   cfg.tz = prefs.getString("tz", DEFAULT_TZ);
   if (!cfg.tz.length()) cfg.tz = DEFAULT_TZ;
+  cfg.vibPin = prefs.getChar("vib", VIB_PIN);
   prefs.end();
 }
 void saveCfg() {
@@ -123,6 +125,7 @@ void saveCfg() {
   prefs.putString("webpass", cfg.webpass);
   prefs.putString("tz", cfg.tz);
   prefs.putUChar("bright", cfg.bright);
+  prefs.putChar("vib", cfg.vibPin);
   prefs.end();
 }
 void applyTheme() { TH = cfg.night ? NIGHT_THEME : DAY_THEME; }
@@ -1809,12 +1812,22 @@ void screenSet(bool on) {
 }
 bool snoozed() { return snoozeUntil && (int32_t)(snoozeUntil - millis()) > 0; }
 void showToast(const char *m, uint32_t ms = 3000) { toastMsg = m; toastUntil = millis() + ms; dirty = true; }
+// External vibration motor (optional, the board has none): pulses while an alarm is active.
+bool vibNow = false;          // pin currently driven high
+uint32_t vibT = 0, vibTestUntil = 0;
+void vibStop() { vibNow = false; vibTestUntil = 0; if (cfg.vibPin >= 0) digitalWrite(cfg.vibPin, LOW); }
+void vibSetPin(int8_t pin) {   // switches the output pin (old one released, new one driven low)
+  if (cfg.vibPin >= 0) { digitalWrite(cfg.vibPin, LOW); pinMode(cfg.vibPin, INPUT); }
+  cfg.vibPin = pin; vibNow = false;
+  if (pin >= 0) { pinMode(pin, OUTPUT); digitalWrite(pin, LOW); }
+}
+void vibTest() { vibTestUntil = millis() + 4000; vibT = millis() - ALERT_EVERY_MS; }   // 3 pulses, no alarm needed
 void snoozeAlarm() {   // BOOT button: silences the alarm for 5 minutes
   if (!screenOn) screenSet(true);
   snoozeUntil = millis() + SNOOZE_MS;
   if (!snoozeUntil) snoozeUntil = 1;
   alertActive = false;
-  if (VIB_PIN >= 0) digitalWrite(VIB_PIN, LOW);
+  vibStop();
   showToast("Alarm snoozed for 5 minutes");
   dirty = true;
 }
@@ -1841,8 +1854,8 @@ void buttonsLoop() {
 }
 
 void alertLoop() {
-  static uint32_t lastChk = 0, vibT = 0, lastSecond = 0;
-  static bool vibOn = false, phase = false;
+  static uint32_t lastChk = 0, lastSecond = 0;
+  static bool phase = false;
   uint32_t now = millis();
   if (now - lastChk >= 1000) {
     lastChk = now;
@@ -1864,9 +1877,11 @@ void alertLoop() {
     alertActive = false;
     dirty = true;
   }
-  if (VIB_PIN >= 0) {   // motor pulses (if connected)
-    if (alertActive && !vibOn && now - vibT >= ALERT_EVERY_MS) { vibOn = true; vibT = now; digitalWrite(VIB_PIN, HIGH); }
-    if (vibOn && (!alertActive || now - vibT >= ALERT_PULSE_MS)) { vibOn = false; digitalWrite(VIB_PIN, LOW); }
+  if (vibTestUntil && (int32_t)(vibTestUntil - now) <= 0) vibTestUntil = 0;
+  if (cfg.vibPin >= 0) {   // motor pulses (if connected)
+    bool vibWant = alertActive || vibTestUntil;
+    if (vibWant && !vibNow && now - vibT >= ALERT_EVERY_MS) { vibNow = true; vibT = now; digitalWrite(cfg.vibPin, HIGH); }
+    if (vibNow && (!vibWant || now - vibT >= ALERT_PULSE_MS)) { vibNow = false; digitalWrite(cfg.vibPin, LOW); }
   }
   bool ph = (now / 500) & 1;
   if (alertActive && ph != phase) { phase = ph; dirty = true; }   // flashing frame
@@ -1880,7 +1895,7 @@ void alertLoop() {
 void powerOff() {
   Serial.println("Power off");
   if (cv) { showMsg("Powering off...", ""); delay(600); }
-  if (VIB_PIN >= 0) digitalWrite(VIB_PIN, LOW);
+  vibStop();
   nmea.stop();
   WiFi.disconnect(true, false);
   WiFi.mode(WIFI_OFF);
@@ -1922,7 +1937,7 @@ void setup() {
   if (!tpOk) Serial.println("FT3168 not found: touch disabled");
   pinMode(BOOT_PIN, INPUT_PULLUP);
   pinMode(PWR_PIN, INPUT);
-  if (VIB_PIN >= 0) { pinMode(VIB_PIN, OUTPUT); digitalWrite(VIB_PIN, LOW); }
+  if (cfg.vibPin >= 0) { pinMode(cfg.vibPin, OUTPUT); digitalWrite(cfg.vibPin, LOW); }
   pmuInit();
   pmuPoll();
   Serial.printf("PMU %s, battery %s %d%% %d mV\n", pmuOk ? "ok" : "NOT FOUND", batt.present ? "present" : "absent", batt.pct, batt.mv);

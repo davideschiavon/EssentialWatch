@@ -28,11 +28,14 @@ Double tap anywhere = day / night (red) theme. Long press = menu.
 
 A collision warning (or a depth below the minimum depth) shows a flashing red frame, jumps to the AIS (or depth) page and
 wakes the screen. BOOT snoozes it for 5 minutes. **The board has no vibration motor**: to get vibration, wire a small motor
-through a transistor to a free GPIO and set `VIB_PIN` in `EssentialViewS3/config.h` (pulses while the alarm is active).
+through a transistor to a free pad (GPIO 1, 2, 3, 17, 18, 21, 43, 44, 47 or 48) and set the pin on the web page ("Vibration motor GPIO", with a
+"Test vibration" button) or `VIB_PIN` in `EssentialViewS3/config.h`. It pulses (300 ms every 1.5 s) while the alarm is active; BOOT stops it.
 
 ## Web page (port 80)
 
-Default login admin / admin (change it). Without Wi-Fi the board starts the AP "EssentialView Network" at 192.168.4.1.
+Login admin with **Digest authentication** (the password is never sent in clear text; Basic is refused). The factory password is `admin`
+and **must be changed at the first login**: until then the page only accepts a new password. After 5 wrong passwords a client is locked
+out for 30 s (doubling each time). The page is still plain HTTP (no encryption of the data). Without Wi-Fi the board starts the AP "EssentialView Network" at 192.168.4.1.
 Settings: Wi-Fi, NMEA server (TCP, with a "Search NMEA server" network scan), minimum depth, time zone, **date and time**, orientation, name, password.
 The screen is shown live with the buttons Right, Left, Double Tap, Power and Boot.
 
