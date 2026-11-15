@@ -1278,19 +1278,19 @@ void pageBattery() {
   }
   roundRect4(bx + bw + 3, by + bh / 2 - 22, 11, 44, 0, 6, 6, 0, TH.mfg);   // polo della batteria
   String num = known ? String(pct) : String("--");
-  tFont(&F_NUM_XL);
+  tFont(&F_NUM_L);                     // percentuale a meta' della dimensione precedente
   int wn = tWidth(num), cap = esFont->capH;
-  tFont(&F_HEAD_L);
+  tFont(&F_HEAD);
   int wp = tWidth("%");
   int bolt = batt.charging ? 38 : 0;
-  int x0 = bx + bw / 2 - (bolt + wn + 6 + wp) / 2;
+  int x0 = bx + bw / 2 - (bolt + wn + 5 + wp) / 2;
   uint16_t tcol = pct > 50 ? TH.bg : TH.fg;   // leggibile sul riempimento chiaro e sullo sfondo scuro
   if (batt.charging) drawIcon(IC_BOLT_30, x0, by + bh / 2 - 15, tcol);
-  tFont(&F_NUM_XL);
+  tFont(&F_NUM_L);
   tColor(tcol);
   tAt(x0 + bolt, by + bh / 2 + cap / 2, num);
-  tFont(&F_HEAD_L);
-  tAt(x0 + bolt + wn + 6, by + bh / 2 + cap / 2, "%");
+  tFont(&F_HEAD);
+  tAt(x0 + bolt + wn + 5, by + bh / 2 + cap / 2, "%");
 
   // ---- meta' bassa: luminosita' (toccare / trascinare per regolarla)
   roundRectBlend(m, 242, SCR_W - 2 * m, 236, sm, sm, big, big, TH.card, 168);

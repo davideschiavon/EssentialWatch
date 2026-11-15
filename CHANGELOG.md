@@ -2,6 +2,10 @@
 
 Every version is published as a GitHub Release (firmware .bin + these notes); the watch web page lists them.
 
+## 2.2.1
+
+- Battery page: the percentage inside the battery icon is 50% smaller.
+
 ## 2.2.0
 
 **New pages** (swipe left / right)
