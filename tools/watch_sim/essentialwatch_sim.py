@@ -383,9 +383,11 @@ class WatchApi:
         return (f'Digest username="admin", realm="{realm}", nonce="{nonce}", uri="{uri}", algorithm=MD5, '
                 f'response="{resp}", opaque="{d.get("opaque", "")}", qop=auth, nc={nc}, cnonce="{cn}"')
 
-    def request(self, method, path, timeout=10, raw=False):
+    def request(self, method, path, timeout=10, raw=False, body=None):
         for attempt in (0, 1):
-            req = urllib.request.Request(f"http://{self.host}{path}", method=method, data=b"" if method == "POST" else None)
+            req = urllib.request.Request(f"http://{self.host}{path}", method=method, data=(json.dumps(body).encode() if body is not None else b"") if method == "POST" else None)
+            if body is not None:
+                req.add_header("Content-Type", "application/json")
             req.add_header("Authorization", self._auth(method, path, attempt == 1))
             try:
                 with urllib.request.urlopen(req, timeout=timeout) as r:
@@ -402,6 +404,12 @@ class WatchApi:
                     raise ValueError(json.loads(e.read().decode()).get("error", str(e)))
                 except json.JSONDecodeError:
                     raise ValueError(str(e))
+
+    def config(self, d):
+        r = self.request("POST", "/api/config", body=d)
+        if not r.get("ok"):
+            raise ValueError(r.get("error", "refused"))
+        return r
 
     def key(self, k):
         return self.request("POST", "/api/key?k=" + k)
@@ -614,6 +622,13 @@ TX = {
     "t_copy": ("Copy address", "Copier l'adresse", "Copiar dirección"),
     "t_usenet": ("Use it for the network connection", "L'utiliser pour la connexion réseau", "Usarla para la conexión de red"),
     "t_web": ("Open its web page", "Ouvrir sa page web", "Abrir su página web"),
+    "t_setsrv": ("Save this PC as the NMEA server of the watch", "Enregistrer ce PC comme serveur NMEA de la montre",
+                 "Guardar este PC como servidor NMEA del reloj"),
+    "m_setsrv": ("the watch will use {0}:{1} as NMEA server (saved)", "la montre utilisera {0}:{1} comme serveur NMEA (enregistré)",
+                 "el reloj usará {0}:{1} como servidor NMEA (guardado)"),
+    "m_srvwarn": ("The watch looks for the NMEA server at {0}, but this PC is {1}: use \"Save this PC as the NMEA server\".",
+                  "La montre cherche le serveur NMEA sur {0}, mais ce PC est {1} : utilisez « Enregistrer ce PC comme serveur NMEA ».",
+                  "El reloj busca el servidor NMEA en {0}, pero este PC es {1}: use «Guardar este PC como servidor NMEA»."),
     "t_point": ("Point the watch at this simulator (USB)", "Pointer la montre vers ce simulateur (USB)", "Apuntar el reloj a este simulador (USB)"),
     "t_screen": ("3. Screen of the watch", "3. Écran de la montre", "3. Pantalla del reloj"),
     "t_pillow": ("live screen copy needs Pillow (pip install pillow)", "la copie d'écran demande Pillow (pip install pillow)",
@@ -1031,7 +1046,7 @@ def run_gui(args):
     inf.pack(fill="x", padx=8, pady=4)
     addr_lbl = tk.Label(inf, text="-", font=("Segoe UI", 18, "bold"), anchor="w")
     addr_lbl.pack(fill="x", padx=8, pady=(4, 0))
-    det_lbl = L(ttk.Label(inf, justify="left"), "t_notconn")
+    det_lbl = L(ttk.Label(inf, justify="left", wraplength=900), "t_notconn")
     det_lbl.pack(anchor="w", padx=8, pady=2)
     ib = ttk.Frame(inf)
     ib.pack(fill="x")
@@ -1058,6 +1073,21 @@ def run_gui(args):
     L(ttk.Button(ib, command=use_net), "t_usenet").pack(side="left", **pad)
     L(ttk.Button(ib, command=lambda: dev["ip"] and __import__("webbrowser").open(f"http://{dev['ip']}/")), "t_web").pack(side="left", **pad)
     L(ttk.Button(ib, command=point_here), "t_point").pack(side="left", **pad)
+
+    def save_server():
+        d = {"host": local_ip(), "port": int(port_v.get() or 10112)}
+        try:
+            if mode_v.get() == "usb":
+                usb_link().send("CSET " + json.dumps(d) + chr(10))
+                console(tr("m_setsrv", d["host"], d["port"]))
+            else:
+                def done(r, e):
+                    console(tr("m_setsrv", d["host"], d["port"]) if not e else tr("m_key", "config", e))
+                api.host, api.password = host_v.get().strip(), pw_v.get()
+                bg(lambda: api.config(d), done)
+        except Exception as e:
+            console(str(e))
+    L(ttk.Button(ib, command=save_server), "t_setsrv").pack(side="left", **pad)
 
     # 3. screen mirror + output
     low = ttk.Frame(tab_tools)
@@ -1126,6 +1156,8 @@ def run_gui(args):
             d.append(tr("m_vibration", s["vib"]) + (tr("m_on") if s.get("vibon") else ""))
         if s.get("screen") is False:
             d.append(tr("m_screen_off"))
+        if s.get("host") and s.get("host") != local_ip() and not s.get("server"):
+            d.append(tr("m_srvwarn", s.get("host"), local_ip()))
         det_lbl.config(text="\n".join(d))
         if ip and not host_v.get():
             host_v.set(ip)

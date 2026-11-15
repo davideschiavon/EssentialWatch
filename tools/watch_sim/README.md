@@ -38,3 +38,5 @@ The NMEA server starts by itself when the window opens (use `--no-autostart` to 
 ## Languages
 
 The window is in English, French or Spanish: choose it top right (the Windows display language is used the first time; the choice is remembered). Scenario names and descriptions, buttons, messages and the Tools tab change at once. `--tab tools` opens the Tools tab at launch.
+
+If the PC gets another address from the router (DHCP), the watch no longer finds the simulator. The Tools tab warns about it ("The watch looks for the NMEA server at ..., but this PC is ...") and the button **Save this PC as the NMEA server of the watch** writes the new address into the watch (over USB or the network). A fixed address for the PC in the router (DHCP reservation) avoids the problem.
