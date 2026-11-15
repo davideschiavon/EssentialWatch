@@ -840,7 +840,7 @@ def run_gui(args):
     img_lbl.pack(padx=6, pady=6)
     mb = ttk.Frame(mir)
     mb.pack(fill="x")
-    ttk.Checkbutton(mb, text="Live", variable=live_v).pack(side="left", **pad)
+    ttk.Checkbutton(mb, text="Live (while this tab is open)", variable=live_v).pack(side="left", **pad)
 
     def save_shot():
         if not dev["img"]:
@@ -909,7 +909,8 @@ def run_gui(args):
             root.after_cancel(mirror_poll.job)
         usb = mode_v.get() == "usb"
         ready = (dev["link"] is not None and dev["link"].ok) if usb else bool(host_v.get().strip())
-        if (now or live_v.get()) and ready and not busy["n"]:
+        on_view = nb.select() == str(tab_tools)   # the copy costs the watch ~0.5 s: only while someone looks at it
+        if (now or (live_v.get() and on_view)) and ready and not busy["n"]:
             busy["n"] = True
 
             def work():
@@ -924,7 +925,7 @@ def run_gui(args):
                     show_result(*r)
                     remember()
             bg(work, done)
-        mirror_poll.job = root.after(3500 if usb else 2000, mirror_poll)
+        mirror_poll.job = root.after(3500 if usb else 3000, mirror_poll)
     mirror_poll.job = None
     show_mode()
 

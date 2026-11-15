@@ -283,6 +283,6 @@ async function setTime(ms){const r=await api('/api/config',{method:'POST',header
 $('tgo').onclick=()=>{const v=$('tset').value;if(!v){msg('Pick a date and time first',false);return}setTime(new Date(v).getTime())};
 $('tpc').onclick=()=>setTime(Date.now());
 (()=>{const d=new Date(),p=n=>String(n).padStart(2,'0');$('tset').value=`${d.getFullYear()}-${p(d.getMonth()+1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`})();
-function shot(){$('scr').src=U('/screen.bmp?'+Date.now())}
-load();status();shot();setInterval(status,3000);setInterval(()=>{if(!document.hidden)shot()},5000);
+function shot(){$('scr').src=U('/screen.bmp?half=1&t='+Date.now())}  // half size: a full copy keeps the watch busy for seconds
+load();status();shot();setInterval(status,3000);setInterval(()=>{if(!document.hidden)shot()},10000);
 </script></body></html>)rawliteral";

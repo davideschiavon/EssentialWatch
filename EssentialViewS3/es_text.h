@@ -12,14 +12,14 @@ inline void tColor(uint16_t c) { esColor = c; }
 
 // Blends colour s onto colour d with opacity a (0-255), in RGB565
 static inline uint16_t blend565(uint16_t d, uint16_t s, uint8_t a) {
-  if (a == 255) return s;
-  int dr = d >> 11, dg = (d >> 5) & 63, db = d & 31;
-  int sr = s >> 11, sg = (s >> 5) & 63, sb = s & 31;
-  int ia = 255 - a;
-  int r = (sr * a + dr * ia + 127) / 255;
-  int g = (sg * a + dg * ia + 127) / 255;
-  int b = (sb * a + db * ia + 127) / 255;
-  return (uint16_t)((r << 11) | (g << 5) | b);
+  // channels spread in one 32-bit word: one multiply, 32 alpha steps (plenty for anti-aliased edges)
+  uint32_t k = ((uint32_t)a + 4) >> 3;
+  if (k >= 32) return s;
+  if (k == 0) return d;
+  uint32_t bd = (d | ((uint32_t)d << 16)) & 0x07E0F81Fu;
+  uint32_t bs = (s | ((uint32_t)s << 16)) & 0x07E0F81Fu;
+  uint32_t r = ((((bs - bd) * k) >> 5) + bd) & 0x07E0F81Fu;
+  return (uint16_t)(r | (r >> 16));
 }
 
 // Next Unicode character of a UTF-8 string (needed for the degree symbol)

@@ -2,6 +2,19 @@
 
 Every version is published as a GitHub Release (firmware .bin + these notes); the watch web page lists them.
 
+## 2.5.0
+
+Smoother page changes. Measured on the watch (USB "PERF" log line, every 5 s):
+
+- Dashboard drawing time per frame: clock page 78 -> 23 ms, AIS page 138 -> 63 ms (the panel transfer stays at 44 ms).
+  - The background gradient and glows are drawn once per theme and then copied (they were redrawn at every frame).
+  - Faster colour blending for the glass tiles and the anti-aliased text (one multiply instead of six per pixel).
+  - Glass rectangles walk the framebuffer row by row.
+- The NMEA server connection no longer freezes the watch: while the server was unreachable each retry blocked everything for 0.5 s every 3 s. The connection now runs in the background; after 5 failures it retries every 10 s.
+- Screen copy (`/screen.bmp`) sent in 8 KB blocks (about 20% faster). The web page now asks for the half-size copy every 10 s (it fetched the full-size one every 5 s, keeping the watch busy for seconds).
+- Simulator Tools tab: the live screen copy runs only while the Tools tab is open.
+- USB log: a `PERF` line reports drawing, panel transfer, worst loop and network times.
+
 ## 2.4.1
 
 - Vibration: the board **does** have a motor. The Waveshare schematic routes it to **GPIO18** ("MOTOR" net), so GPIO18 is now the default `VIB_PIN` (2.4.0 wrongly said the board had no motor). Alarms pulse it 300 ms every 1.5 s; BOOT snoozes it. The web page "Test vibration" button checks it.
