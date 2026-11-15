@@ -26,6 +26,8 @@ String cfgJson() {
   d["dalarm"] = serialized(String(cfg.depthAlarm, 1));
   d["night"] = cfg.night;
   d["rot"] = cfg.rot;
+  d["tz"] = cfg.tz;
+  d["bright"] = cfg.bright;
   d["webuser"] = WEB_USER;
   d["webpass_default"] = cfg.webpass == WEB_DEFAULT_PASS;
   d["fw"] = FW_VERSION;
@@ -47,6 +49,7 @@ String backupJson() {
   d["dalarm"] = serialized(String(cfg.depthAlarm, 1));
   d["night"] = cfg.night;
   d["rot"] = cfg.rot;
+  d["tz"] = cfg.tz;
   String s;
   serializeJson(d, s);
   return s;
@@ -73,6 +76,27 @@ String statusJson() {
   float ta, ts;
   if (getTrue(ta, ts)) { d["twa"] = serialized(String(ta, 0)); d["tws"] = serialized(String(ts, 1)); }
   d["uptime"] = millis() / 1000;
+  {  // orologio, batteria, tasti
+    time_t tn = time(nullptr);
+    struct tm tmv;
+    localtime_r(&tn, &tmv);
+    char tb[24];
+    strftime(tb, sizeof tb, "%Y-%m-%d %H:%M:%S", &tmv);
+    d["time"] = clockValid() ? String(tb) : String("");
+    d["epoch"] = (long long)tn;
+    d["tsrc"] = clockSource();
+    d["pmu"] = pmuOk;
+    if (batt.ok && batt.present) {
+      if (batt.pct >= 0) d["batt"] = batt.pct;
+      d["vbat"] = serialized(String(batt.mv / 1000.0f, 2));
+    }
+    d["chg"] = batt.charging; d["vbus"] = batt.vbus;
+    d["pwr"] = digitalRead(PWR_PIN);
+    d["boot"] = digitalRead(BOOT_PIN);
+    d["alert"] = alertActive;
+    d["snooze"] = snoozed() ? (int)((snoozeUntil - millis()) / 1000) : 0;
+    d["screen"] = screenOn;
+  }
   d["heap"] = ESP.getFreeHeap();
   String s;
   serializeJson(d, s);
@@ -133,18 +157,37 @@ String applyCfg(const String &body, bool &needRestart) {
   }
   if (!d["night"].isNull()) n.night = d["night"].as<bool>();
   if (!d["rot"].isNull()) n.rot = d["rot"].as<int>() == 2 ? 2 : 0;
+  if (!d["bright"].isNull()) {
+    int bv = d["bright"].as<int>();
+    if (bv < 5 || bv > 100) return "brightness: 5-100 %";
+    n.bright = bv;
+  }
+  if (d["tz"].is<const char *>()) {
+    String z = d["tz"].as<String>();
+    z.trim();
+    if (!z.length() || z.length() > 63) return "time zone: 1-63 characters (POSIX TZ string)";
+    n.tz = z;
+  }
   if (d["webpass"].is<const char *>()) {
     String w = d["webpass"].as<String>();
     if (w.length() < 4 || w.length() > 32) return "web password: 4-32 characters";
     n.webpass = w;
   }
 
+  long long newEpoch = 0;
+  if (!d["epoch"].isNull()) {
+    newEpoch = d["epoch"].as<long long>();
+    if (newEpoch < 1700000000LL || newEpoch > 4102444800LL) return "time: invalid date";
+  }
   needRestart = n.ssid != cfg.ssid || n.pass != cfg.pass || n.name != cfg.name;
   bool srvChanged = n.host != cfg.host || n.port != cfg.port;
   bool look = n.night != cfg.night || n.rot != cfg.rot;
   cfg = n;
   saveCfg();
+  applyTz();
+  if (newEpoch) setClockEpoch((time_t)newEpoch);
   if (srvChanged) { nmea.stop(); srvUp = false; lastConnTry = 0; nConnTry = 0; }
+  if (n.bright != 0) applyBrightness();
   if (look) { applyTheme(); cv->setRotation(cfg.rot == 2 ? 2 : 0); }
   dirty = true;
   return "";
@@ -152,6 +195,19 @@ String applyCfg(const String &body, bool &needRestart) {
 
 String okJson(bool restart) { return String("{\"ok\":true,\"restart\":") + (restart ? "true" : "false") + "}"; }
 String errJson(const String &e) { return String("{\"ok\":false,\"error\":\"") + e + "\"}"; }
+
+// tasti dell'orologio dalla pagina web: right / left = scorrimento, dtap = doppio tocco (giorno/notte),
+// power = tasto PWR (schermo acceso/spento), boot = tasto BOOT (snooze allarme)
+bool sendKeyName(const String &k) {
+  if (!screenOn && k != "power") screenSet(true);
+  if (k == "right") handleKeys(EV_SHORT, EV_NONE, EV_NONE, EV_NONE);
+  else if (k == "left") handleKeys(EV_NONE, EV_SHORT, EV_NONE, EV_NONE);
+  else if (k == "dtap") handleKeys(EV_NONE, EV_NONE, EV_NONE, EV_SHORT);
+  else if (k == "power") pwrShortPress();
+  else if (k == "boot") snoozeAlarm();
+  else return false;
+  return true;
+}
 
 void sendKeyChar(char k) {
   switch (k) {
@@ -183,7 +239,7 @@ void configCmd(const String &c) {
 // Login sempre richiesto via rete (utente admin). Via USB no: accesso fisico, serve a recuperare la password.
 bool webAuth() {
   if (web.authenticate(WEB_USER, cfg.webpass.c_str())) return true;
-  web.requestAuthentication(BASIC_AUTH, "EssentialView");
+  web.requestAuthentication(BASIC_AUTH, "EssentialWatch");
   return false;
 }
 
@@ -286,8 +342,9 @@ void webSetup() {
   web.on("/api/key", HTTP_POST, [] {
     if (!webAuth()) return;
     String k = web.arg("k");
-    if (k.length() == 1 && strchr("UDOLBK", k[0])) { sendKeyChar(k[0]); sendJson(okJson(false)); }
-    else sendJson(errJson("k = U D O L B K"), 400);
+    if (sendKeyName(k)) sendJson(okJson(false));
+    else if (k.length() == 1 && strchr("UDOLBK", k[0])) { sendKeyChar(k[0]); sendJson(okJson(false)); }
+    else sendJson(errJson("k = right left dtap power boot (or U D O L B K)"), 400);
   });
   web.on("/screen.bmp", HTTP_GET, [] { if (webAuth()) sendScreenBmp(); });
   // aggiornamento firmware (OTA): POST multipart con il file firmware.bin

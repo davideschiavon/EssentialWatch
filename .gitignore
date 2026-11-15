@@ -2,3 +2,5 @@ __pycache__/
 .pio/
 *.pyc
 build/
+# i firmware si pubblicano come GitHub Release (con il changelog), non nel repo
+release/*.bin

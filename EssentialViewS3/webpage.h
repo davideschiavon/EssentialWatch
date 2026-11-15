@@ -1,11 +1,11 @@
-// EssentialView - pagina web di configurazione (colori e font come essentialsail.com)
+// EssentialWatch - pagina web di configurazione (colori e font come essentialsail.com)
 #pragma once
 #include <pgmspace.h>
 
 const char WEB_PAGE[] PROGMEM = R"rawliteral(<!doctype html>
 <html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>EssentialView Configuration</title>
+<title>EssentialWatch</title>
 <link rel="stylesheet" media="print" onload="this.media='all'"
  href="https://fonts.googleapis.com/css2?family=Baloo+2:wght@600;700;800&family=Nunito+Sans:wght@400;600;700&display=swap">
 <style>
@@ -53,6 +53,7 @@ legend{font-family:"Baloo 2",system-ui,sans-serif;font-weight:700;color:var(--pr
 #msg.ok{color:var(--ok)}#msg.bad{color:var(--bad)}
 .screen{width:100%;height:auto;border-radius:8px;border:1px solid var(--border);background:#fff;image-rendering:auto}
 .keys{display:grid;grid-template-columns:repeat(3,1fr);gap:6px;margin-top:10px}
+#fwlog{white-space:pre-wrap;background:var(--muted);border-radius:10px;padding:10px 12px;margin:8px 0 0;max-height:220px;overflow:auto;font-size:14px}
 .keys .btn{padding:10px 0}
 .hint{font-size:13px;color:var(--mfg)}
 .bar{height:10px;border-radius:5px;background:var(--muted);margin-top:10px;overflow:hidden}
@@ -62,7 +63,7 @@ legend{font-family:"Baloo 2",system-ui,sans-serif;font-weight:700;color:var(--pr
 </style></head><body>
 <header><div class="top">
  <div class="brand"><div class="logo"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2"><path d="M12 3v15M12 3l7 13h-7M12 6L6 16h6M4 20h16"/></svg></div>
- <div><h1>EssentialView</h1><div class="sub">Configuration</div></div></div>
+ <div><h1>EssentialWatch</h1><div class="sub">Configuration</div></div></div>
  <div class="pill" id="who">...</div>
 </div></header>
 <main>
@@ -84,9 +85,17 @@ legend{font-family:"Baloo 2",system-ui,sans-serif;font-weight:700;color:var(--pr
  <div class="hint">Common ports: 10110, 2000, 4242 (see your gateway).</div>
 </fieldset>
 <fieldset><legend>Display</legend>
- <div class="row"><div><label for="dalarm">Depth alarm (m)</label><input id="dalarm" type="number" step="0.1" min="0" max="100"></div>
+ <div class="row"><div><label for="dalarm">Minimum depth (m)</label><input id="dalarm" type="number" step="0.1" min="0" max="100"></div>
  <div><label for="rot">Orientation</label><select id="rot"><option value="0">Landscape</option><option value="2">Landscape, rotated 180&deg;</option></select></div></div>
+ <div class="hint">Minimum depth: below this depth the depth turns red and the alarm starts (flashing frame on the watch; Boot = snooze 5 minutes).</div>
+ <label for="tz">Time zone (POSIX string, automatic daylight saving)</label><input id="tz" maxlength="63" placeholder="CET-1CEST,M3.5.0,M10.5.0/3">
+ <div class="hint">Time comes from NTP (if the WiFi has Internet) or from the GPS (NMEA RMC/ZDA). Italy: CET-1CEST,M3.5.0,M10.5.0/3 &middot; UTC: UTC0</div>
  <div class="check"><input type="checkbox" id="night"><span>Night mode (inverted colours)</span></div>
+</fieldset>
+<fieldset><legend>Date and time</legend>
+ <div class="hint">Watch time: <b id="wtime">--</b> <span id="wsrc"></span></div>
+ <div class="row"><input id="tset" type="datetime-local" step="1"><button class="btn alt small" type="button" id="tgo">Set time</button><button class="btn alt small" type="button" id="tpc">Use computer time</button></div>
+ <div class="hint">The time is kept by the watch battery-backed clock. NTP (if the WiFi has Internet) and the GPS (NMEA) correct it automatically.</div>
 </fieldset>
 <fieldset><legend>Device</legend>
  <label for="name">Name (web address http://name.local)</label><input id="name" maxlength="24">
@@ -107,18 +116,22 @@ legend{font-family:"Baloo 2",system-ui,sans-serif;font-weight:700;color:var(--pr
 <section class="card"><h2>Screen</h2>
 <img class="screen" id="scr" alt="display" width="410" height="502">
 <div class="keys">
- <span></span><button class="btn alt" data-k="U">UP</button><span></span>
- <button class="btn alt" data-k="B">BACK</button><button class="btn" data-k="O">OK</button><button class="btn alt" data-k="D">DOWN</button>
- <button class="btn alt" data-k="L" style="grid-column:1/3">OK long (menu)</button><button class="btn alt" data-k="K">BACK long</button>
+ <button class="btn alt" data-k="right">Right</button><button class="btn alt" data-k="left">Left</button><button class="btn alt" data-k="dtap">Double Tap</button>
+ <button class="btn alt" data-k="power">Power</button><button class="btn alt" data-k="boot">Boot</button>
 </div>
-<p class="hint">The picture refreshes every 5 s. Buttons act like the device buttons.</p>
+<p class="hint">The picture refreshes every 5 s. Right / Left = swipe to the previous / next page &middot; Double Tap = day / night &middot; Power = screen on / off (hold the real button 4 s to power the watch off) &middot; Boot = snooze the collision alarm for 5 minutes.</p>
 </section>
 
 <section class="card"><h2>Firmware</h2>
 <p>Installed version <b id="fwv">...</b></p>
-<label for="fwfile">New firmware file (.bin)</label>
-<input id="fwfile" type="file" accept=".bin">
-<div class="actions"><button class="btn" id="fwgo" type="button">Install firmware</button></div>
+<div class="actions"><button class="btn" id="fwfind" type="button">Search firmware</button></div>
+<label for="fwsel">Firmware on GitHub (latest first)</label>
+<select id="fwsel" disabled><option>Press "Search firmware"</option></select>
+<pre id="fwlog" hidden></pre>
+<div class="actions"><button class="btn" id="fwgo" type="button" disabled>Install selected firmware</button></div>
+<details style="margin-top:10px"><summary class="hint">Install a .bin file from this computer</summary>
+<label for="fwfile">Firmware file (.bin)</label><input id="fwfile" type="file" accept=".bin">
+<div class="actions"><button class="btn alt" id="fwfilego" type="button">Install file</button></div></details>
 <div class="bar"><div id="fwbar"></div></div>
 <div id="fwmsg" class="hint">The device restarts by itself when the update is done (about 30 s). Settings are kept.</div>
 </section>
@@ -151,16 +164,19 @@ async function status(){try{const s=await api('/api/status');
  +tile('NMEA server',`<span class="dot ${s.server?'on':''}"></span>${s.host||'not set'}:${s.port}`)
  +tile('Sentences ok',s.ok)+tile('AWA / AWS',s.awa!=null?`${s.awa}° / ${s.aws} kn`:'--')
  +tile('TWA / TWS',s.twa!=null?`${s.twa}° / ${s.tws} kn`:'--')+tile('SOG / STW',`${s.sog??'--'} / ${s.stw??'--'} kn`)
- +tile('Depth',s.depth!=null?s.depth+' m':'--')+(s.ap?tile('Setup WiFi',s.ap):'')}catch(e){}}
+ +tile('Depth',s.depth!=null?s.depth+' m':'--')+tile('Battery',s.batt!=null?`${s.batt}% · ${s.vbat} V${s.chg?' · charging':''}`:(s.pmu?'no battery':'--'))
+ +tile('Watch time',s.time||'--')+(s.alert?tile('Collision alarm','ACTIVE'):s.snooze?tile('Alarm snoozed',Math.floor(s.snooze/60)+':'+String(s.snooze%60).padStart(2,'0')):'')
+ +(s.ap?tile('Setup WiFi',s.ap):'');
+ $('wtime').textContent=s.time||'not set';$('wsrc').textContent=s.time&&s.tsrc?'('+s.tsrc+')':''}catch(e){}}
 async function load(){cfg=await api('/api/config');
- for(const k of['ssid','host','port','dalarm','name'])$(k).value=cfg[k];
+ for(const k of['ssid','host','port','dalarm','name','tz'])$(k).value=cfg[k];
  $('rot').value=cfg.rot;$('night').checked=cfg.night;$('pass').value='';$('webpass').value='';
  $('pass').placeholder=cfg.pass_set?'(unchanged)':'(none)';$('webpass2').value='';$('fwv').textContent=cfg.fw;
  $('pwdef').innerHTML=cfg.webpass_default?'<span class="warn">The password is still the default one (admin): change it.</span>':'';
  $('openn').checked=false}
 async function save(andRestart){
  const b={name:$('name').value.trim(),ssid:$('ssid').value,host:$('host').value.trim(),
-  port:+$('port').value,dalarm:+$('dalarm').value,night:$('night').checked,rot:+$('rot').value};
+  port:+$('port').value,dalarm:+$('dalarm').value,tz:$('tz').value.trim(),night:$('night').checked,rot:+$('rot').value};
  if($('openn').checked)b.pass='';else if($('pass').value)b.pass=$('pass').value;
  if($('webpass').value){if($('webpass').value!==$('webpass2').value){msg('The two passwords are different',false);return}
   b.webpass=$('webpass').value}
@@ -193,16 +209,47 @@ $('scan').onclick=async()=>{$('scan').disabled=true;$('scan').textContent='...';
  msg(`${l.length} networks found: pick one in the Network field.`,true)}catch(e){msg('Scan failed',false)}
  $('scan').disabled=false;$('scan').textContent='Scan'};
 document.querySelectorAll('[data-k]').forEach(b=>b.onclick=async()=>{await fetch(U('/api/key?k='+b.dataset.k),{method:'POST'});setTimeout(shot,1500)});
-$('fwgo').onclick=()=>{const f=$('fwfile').files[0];const m=$('fwmsg');
- if(!f){m.textContent='Choose a .bin file first';m.className='warn';return}
- if(!confirm(`Install ${f.name} (${Math.round(f.size/1024)} KB)? The device restarts at the end.`))return;
- const fd=new FormData();fd.append('firmware',f,f.name);const x=new XMLHttpRequest();
+function fwUpload(blob,name){const m=$('fwmsg');
+ const fd=new FormData();fd.append('firmware',blob,name);const x=new XMLHttpRequest();
  x.upload.onprogress=e=>{if(e.lengthComputable){const p=Math.round(100*e.loaded/e.total);$('fwbar').style.width=p+'%';m.textContent=`Uploading ${p}%...`;m.className='hint'}};
  x.onload=()=>{let r={};try{r=JSON.parse(x.responseText)}catch(e){}
   if(x.status==200&&r.ok){m.textContent='Installed. The device is restarting: this page reloads in 30 s.';m.className='hint';setTimeout(()=>location.reload(),30000)}
   else{m.textContent='Update failed: '+(r.error||x.status);m.className='warn';$('fwbar').style.width='0'}};
  x.onerror=()=>{m.textContent='Connection lost during the upload';m.className='warn'};
- x.open('POST',U('/api/update'));x.send(fd);$('fwgo').disabled=true;setTimeout(()=>$('fwgo').disabled=false,40000)};
+ x.open('POST',U('/api/update'));x.send(fd);$('fwgo').disabled=true;$('fwfilego').disabled=true;
+ setTimeout(()=>{$('fwgo').disabled=!rels.length;$('fwfilego').disabled=false},40000)}
+$('fwfilego').onclick=()=>{const f=$('fwfile').files[0];const m=$('fwmsg');
+ if(!f){m.textContent='Choose a .bin file first';m.className='warn';return}
+ if(!confirm(`Install ${f.name} (${Math.round(f.size/1024)} KB)? The device restarts at the end.`))return;fwUpload(f,f.name)};
+// Firmware su GitHub: ogni versione e' una Release con il file .bin e il changelog nelle note
+const GH='https://api.github.com/repos/davideschiavon/EssentialWatch/releases?per_page=30';let rels=[];
+function relAsset(r){return(r.assets||[]).find(a=>/\.bin$/i.test(a.name)&&!/merged|bootloader|partitions/i.test(a.name))}
+function relShow(){const r=rels[$('fwsel').selectedIndex];if(!r)return;const L=$('fwlog');L.hidden=false;
+ L.textContent=(r.name||r.tag_name)+'  ('+(r.published_at||'').slice(0,10)+')\n\n'+(r.body||'(no changelog)').replace(/\r/g,'').replace(/^#+\s*/gm,'')}
+$('fwsel').onchange=relShow;
+$('fwfind').onclick=async()=>{const m=$('fwmsg');m.textContent='Searching GitHub...';m.className='hint';$('fwfind').disabled=true;
+ try{const r=await fetch(GH,{headers:{Accept:'application/vnd.github+json'}});if(!r.ok)throw new Error('GitHub answered '+r.status);
+  rels=(await r.json()).filter(x=>!x.draft&&relAsset(x));
+  if(!rels.length){m.textContent='No firmware found on GitHub.';m.className='warn';return}
+  const sel=$('fwsel');sel.innerHTML='';
+  rels.forEach((x,i)=>{const o=document.createElement('option');const v=(x.tag_name||'').replace(/^v/,'');
+   o.textContent=(x.name||x.tag_name)+(i==0?'  (latest)':'')+(cfg.fw&&cfg.fw.startsWith(v)?'  (installed)':'');sel.appendChild(o)});
+  sel.disabled=false;$('fwgo').disabled=false;relShow();
+  m.textContent=`${rels.length} firmware found. Pick one, read the changelog, then install.`;m.className='hint'}
+ catch(e){m.textContent='Cannot reach GitHub ('+e.message+'). The computer needs Internet access; you can install a .bin file instead.';m.className='warn'}
+ $('fwfind').disabled=false};
+$('fwgo').onclick=async()=>{const r=rels[$('fwsel').selectedIndex],m=$('fwmsg');if(!r)return;const a=relAsset(r);
+ if(!confirm(`Install ${r.name||r.tag_name}? The device restarts at the end. Settings are kept.`))return;
+ m.textContent='Downloading from GitHub...';m.className='hint';
+ try{const d=await fetch(a.url,{headers:{Accept:'application/octet-stream'}});if(!d.ok)throw new Error('download '+d.status);
+  fwUpload(await d.blob(),a.name)}
+ catch(e){m.innerHTML='Download from GitHub failed ('+e.message+'). Download <a href="'+a.browser_download_url+'" target="_blank">'+a.name+'</a> and use "Install a .bin file".';m.className='warn'}};
+// ora
+async function setTime(ms){const r=await api('/api/config',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({epoch:Math.round(ms/1000)})});
+ msg(r.ok?'Time set.':r.error,!!r.ok);status()}
+$('tgo').onclick=()=>{const v=$('tset').value;if(!v){msg('Pick a date and time first',false);return}setTime(new Date(v).getTime())};
+$('tpc').onclick=()=>setTime(Date.now());
+(()=>{const d=new Date(),p=n=>String(n).padStart(2,'0');$('tset').value=`${d.getFullYear()}-${p(d.getMonth()+1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`})();
 function shot(){$('scr').src=U('/screen.bmp?'+Date.now())}
 load();status();shot();setInterval(status,3000);setInterval(()=>{if(!document.hidden)shot()},5000);
 </script></body></html>)rawliteral";

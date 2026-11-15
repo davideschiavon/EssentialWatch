@@ -2,9 +2,10 @@
 // Porting del firmware e-ink (firmware/src/main.cpp) per il display a colori:
 // - stesse frasi NMEA (WiFi TCP, opzionale RS485), stesse regole delle vele, stessi menu e pagina web;
 // - pulsanti fisici sostituiti dal touch: tasti virtuali in basso nei menu,
-//   nella dashboard swipe = cambio pagina, pressione lunga = menu, tasto DAY/NIGHT in alto;
+//   nella dashboard swipe = cambio pagina, pressione lunga = menu, doppio tocco = tema giorno/notte;
 // - disegno su buffer fuori schermo (Arduino_Canvas), copiato intero sul pannello: niente sfarfallio.
-// Pagina 1: quadrante vento (AWA/TWA) + AWS/TWS/SOG.  Pagina 2: profondita' + storico 30 min + allarme.
+// Pagina 1: ora e data.  Pagina 2: quadrante vento (AWA/TWA, AWS/TWS al centro).
+// Pagina 3: SOG + profondita'.  Pagina 4: barche AIS in rotta di collisione o molto vicine (max 5).  Pagina 5: batteria (in alto) + luminosita' (in basso).
 
 #include <Arduino.h>
 #include <WiFi.h>
@@ -12,16 +13,30 @@
 #include <math.h>
 #include <esp_sleep.h>
 #include <esp_system.h>
+#include <time.h>
+#include <sys/time.h>
+#include <esp_sntp.h>
 #include <esp_heap_caps.h>
 #include <Wire.h>
 #include <Arduino_GFX_Library.h>
 #include "config.h"
 #include "es_fonts.h"  // font Essentialsail: tipo EsFont usato dai prototipi generati da Arduino
+#include "es_icons.h"  // icone Material (come EssentialSail): tipo EsIcon usato dai prototipi
 
 // Tipi usati dai prototipi generati da Arduino: vanno dichiarati prima di tutto il resto
 enum Ev { EV_NONE = 0, EV_SHORT, EV_LONG, EV_REPEAT };
 enum Mode { M_DASH, M_MENU, M_EDIT, M_SCAN, M_DIAG, M_SETUP, M_FACTORY };
 enum EditT { E_PASS, E_HOST, E_PORT, E_ALARM };
+
+// Tipi AIS: dichiarati qui perche' i prototipi generati da Arduino li usano
+struct AisT {
+  uint32_t mmsi;
+  char name[21];
+  float lat, lon, cog, sog;
+  uint32_t tPos, tSeen;
+  bool hasPos;
+};
+struct AisRow { const AisT *t; float dist, brg, cpa, tcpa; bool risk; };
 
 // ============================== Schermo e colori ==========================
 Arduino_DataBus *bus = new Arduino_ESP32QSPI(LCD_CS, LCD_SCLK, LCD_SDIO0, LCD_SDIO1, LCD_SDIO2, LCD_SDIO3);
@@ -48,22 +63,23 @@ static constexpr uint16_t rgb565(uint8_t r, uint8_t g, uint8_t b) {
 // Colori dei colori di essentialsail.com (come il tool PC). Giorno: fondo chiaro.
 // Notte: fondo scuro e tonalita' piu' tenui, per non abbagliare di notte.
 struct Theme {
-  uint16_t bg, card, fg, mfg, border, pri, acc, ok, bad, sail, hull;
+  uint16_t bg, card, fg, mfg, border, pri, acc, ok, bad, sail, hull, warn, yel, badbg;
 };
 const Theme DAY_THEME = {
   rgb565(242, 250, 254), rgb565(255, 255, 255), rgb565(6, 35, 61), rgb565(78, 109, 131),
   rgb565(197, 219, 233), rgb565(0, 135, 243), rgb565(0, 170, 170), rgb565(10, 143, 77),
-  rgb565(214, 58, 58), rgb565(255, 246, 222), rgb565(0, 27, 58),
+  rgb565(214, 58, 58), rgb565(255, 246, 222), rgb565(0, 27, 58), rgb565(255, 140, 0), rgb565(244, 190, 0), rgb565(255, 232, 232),
 };
 const Theme NIGHT_THEME = {
   // solo rosso (nessun altro colore), per non rovinare la vista notturna: la distinzione e' nella luminosita'
   rgb565(12, 0, 0), rgb565(30, 3, 3), rgb565(255, 70, 70), rgb565(170, 38, 38),
   rgb565(84, 14, 14), rgb565(225, 38, 38), rgb565(255, 120, 120), rgb565(150, 26, 26),
-  rgb565(255, 50, 50), rgb565(58, 8, 8), rgb565(200, 48, 48),
+  rgb565(255, 50, 50), rgb565(58, 8, 8), rgb565(200, 48, 48), rgb565(255, 60, 60), rgb565(255, 150, 150), rgb565(74, 6, 6),
 };
 Theme TH = DAY_THEME;  // tema attivo (applyTheme)
 
 // ============================== Impostazioni ==============================
+#define DEFAULT_TZ "CET-1CEST,M3.5.0,M10.5.0/3"   // Italia: ora legale automatica
 Preferences prefs;
 struct Settings {
   String ssid, pass, host;
@@ -73,6 +89,8 @@ struct Settings {
   String name;        // nome del dispositivo: http://<name>.local e rete di configurazione
   uint8_t rot = 0;    // rotazione schermo: 0 o 2 (180 gradi)
   String webpass;     // password della pagina web (utente WEB_USER), mai vuota
+  uint8_t bright = 100;   // luminosita' dello schermo, 5-100 %
+  String tz;          // fuso orario POSIX, es. "CET-1CEST,M3.5.0,M10.5.0/3"
 } cfg;
 
 void loadCfg() {
@@ -87,6 +105,9 @@ void loadCfg() {
   cfg.rot = prefs.getUChar("rot", SCREEN_ROTATION);
   cfg.webpass = prefs.getString("webpass", WEB_DEFAULT_PASS);
   if (!cfg.webpass.length()) cfg.webpass = WEB_DEFAULT_PASS;
+  cfg.bright = constrain((int)prefs.getUChar("bright", 100), 5, 100);
+  cfg.tz = prefs.getString("tz", DEFAULT_TZ);
+  if (!cfg.tz.length()) cfg.tz = DEFAULT_TZ;
   prefs.end();
 }
 void saveCfg() {
@@ -100,9 +121,12 @@ void saveCfg() {
   prefs.putString("name", cfg.name);
   prefs.putUChar("rot", cfg.rot);
   prefs.putString("webpass", cfg.webpass);
+  prefs.putString("tz", cfg.tz);
+  prefs.putUChar("bright", cfg.bright);
   prefs.end();
 }
 void applyTheme() { TH = cfg.night ? NIGHT_THEME : DAY_THEME; }
+void applyBrightness() { lcd->setBrightness((uint8_t)(255 * constrain((int)cfg.bright, 5, 100) / 100)); }
 
 // Font Essentialsail (anti-aliasing) e simbolo del grado in UTF-8
 #define DEG "Â°"
@@ -142,6 +166,311 @@ bool getTrue(float &a, float &s) {
   return true;
 }
 
+// ============================== Ora e data ================================
+// Sorgenti: NTP (se il WiFi ha Internet) oppure le frasi NMEA RMC/ZDA (ora UTC del GPS), poi orologio interno.
+// Il fuso orario e' una stringa POSIX (cfg.tz), cosi' l'ora legale e' automatica.
+uint32_t ntpT = 0, nmeaTimeT = 0;
+bool ntpSynced = false;
+static void onNtpSync(struct timeval *) { ntpT = millis(); ntpSynced = true; extern volatile bool rtcDirty; rtcDirty = true; }
+void applyTz() { setenv("TZ", cfg.tz.c_str(), 1); tzset(); }
+bool clockValid() { return time(nullptr) > 1700000000L; }
+static bool ntpFresh() { return ntpSynced && millis() - ntpT < 3UL * 3600UL * 1000UL; }
+const char *clockSource() {
+  if (!clockValid()) return "none";
+  if (ntpFresh()) return "NTP";
+  if (nmeaTimeT && millis() - nmeaTimeT < 20000) return "GPS";
+  return "internal clock";
+}
+static int64_t daysFromCivil(int y, int m, int d) {  // giorni dal 1970-01-01
+  y -= m <= 2;
+  int era = (y >= 0 ? y : y - 399) / 400;
+  unsigned yoe = (unsigned)(y - era * 400);
+  unsigned doy = (153 * (m + (m > 2 ? -3 : 9)) + 2) / 5 + d - 1;
+  unsigned doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+  return (int64_t)era * 146097 + (int64_t)doe - 719468;
+}
+static void nmeaTime(const String &hms, int d, int m, int y) {  // hhmmss(.ss) UTC + data
+  if (hms.length() < 6 || y < 2024 || m < 1 || m > 12 || d < 1 || d > 31) return;
+  nmeaTimeT = millis();
+  if (ntpFresh()) return;  // NTP ha la precedenza
+  time_t t = (time_t)(daysFromCivil(y, m, d) * 86400 + hms.substring(0, 2).toInt() * 3600L +
+                      hms.substring(2, 4).toInt() * 60L + hms.substring(4, 6).toInt());
+  time_t cur = time(nullptr);
+  if (!clockValid() || labs((long)(cur - t)) > 1) {
+    struct timeval tv = {t, 0};
+    settimeofday(&tv, nullptr);
+    extern volatile bool rtcDirty;
+    rtcDirty = true;   // l'RTC viene aggiornato (al massimo ogni 10 minuti)
+  }
+}
+
+// ============================== PMU AXP2101, RTC PCF85063 ==================
+static bool i2cRead(uint8_t addr, uint8_t reg, uint8_t *buf, int n) {
+  Wire.beginTransmission(addr);
+  Wire.write(reg);
+  if (Wire.endTransmission(false) != 0) return false;
+  if (Wire.requestFrom((int)addr, n) != n) return false;
+  for (int i = 0; i < n; i++) buf[i] = Wire.read();
+  return true;
+}
+static bool i2cWrite(uint8_t addr, uint8_t reg, const uint8_t *buf, int n) {
+  Wire.beginTransmission(addr);
+  Wire.write(reg);
+  for (int i = 0; i < n; i++) Wire.write(buf[i]);
+  return Wire.endTransmission() == 0;
+}
+
+struct Batt { bool ok = false, present = false, charging = false, vbus = false; int pct = -1, mv = 0; } batt;
+bool pmuOk = false;
+
+void pmuInit() {
+  uint8_t v;
+  pmuOk = i2cRead(PMU_ADDR, 0x00, &v, 1);
+  if (!pmuOk) return;
+  if (i2cRead(PMU_ADDR, 0x30, &v, 1)) { v |= 0x01; i2cWrite(PMU_ADDR, 0x30, &v, 1); }   // ADC tensione batteria
+  if (i2cRead(PMU_ADDR, 0x18, &v, 1)) { v |= 0x08; i2cWrite(PMU_ADDR, 0x18, &v, 1); }   // gauge (percentuale)
+}
+
+void pmuPoll() {
+  uint8_t r[2], p, vb[2];
+  if (!pmuOk || !i2cRead(PMU_ADDR, 0x00, r, 2)) { batt.ok = false; return; }
+  batt.ok = true;
+  batt.present = r[0] & 0x08;
+  batt.vbus = r[0] & 0x20;
+  batt.charging = ((r[1] >> 5) & 3) == 1;
+  batt.pct = -1; batt.mv = 0;
+  if (batt.present) {
+    if (i2cRead(PMU_ADDR, 0xA4, &p, 1)) batt.pct = constrain((int)p, 0, 100);
+    if (i2cRead(PMU_ADDR, 0x34, vb, 2)) batt.mv = ((vb[0] & 0x3F) << 8) | vb[1];
+  }
+}
+
+// spegne davvero l'orologio (si riaccende con un clic su PWR)
+bool pmuShutdown() {
+  uint8_t v;
+  if (!pmuOk || !i2cRead(PMU_ADDR, 0x10, &v, 1)) return false;
+  v |= 0x01;
+  return i2cWrite(PMU_ADDR, 0x10, &v, 1);
+}
+
+static uint8_t bcd2(uint8_t b) { return (b >> 4) * 10 + (b & 15); }
+static uint8_t tobcd(int v) { return ((v / 10) << 4) | (v % 10); }
+volatile bool rtcDirty = false;   // da riscrivere nell'RTC (NTP/GPS hanno corretto l'ora)
+
+bool rtcRead(time_t &utc) {
+  uint8_t b[7];
+  if (!i2cRead(RTC_ADDR, 0x04, b, 7) || (b[0] & 0x80)) return false;   // bit 7 = oscillatore fermo: ora non valida
+  int y = 2000 + bcd2(b[6]), mo = bcd2(b[5] & 0x1F), d = bcd2(b[3] & 0x3F);
+  int h = bcd2(b[2] & 0x3F), mi = bcd2(b[1] & 0x7F), se = bcd2(b[0] & 0x7F);
+  if (y < 2024 || mo < 1 || mo > 12 || d < 1 || d > 31) return false;
+  utc = (time_t)(daysFromCivil(y, mo, d) * 86400 + h * 3600L + mi * 60L + se);
+  return true;
+}
+bool rtcWrite(time_t utc) {
+  struct tm t;
+  gmtime_r(&utc, &t);
+  uint8_t b[7] = {tobcd(t.tm_sec), tobcd(t.tm_min), tobcd(t.tm_hour), tobcd(t.tm_mday), (uint8_t)t.tm_wday,
+                  tobcd(t.tm_mon + 1), tobcd(t.tm_year - 100)};
+  return i2cWrite(RTC_ADDR, 0x04, b, 7);
+}
+// imposta l'ora a mano (pagina web): orologio di sistema + RTC con batteria
+bool setClockEpoch(time_t t) {
+  struct timeval tv = {t, 0};
+  settimeofday(&tv, nullptr);
+  ntpSynced = false;
+  nmeaTimeT = 0;
+  return rtcWrite(t);
+}
+
+// ============================== AIS =======================================
+// Decodifica come EssentialSail (NMEAParser.kt): payload a 6 bit (char-48, se >40 meno 8), messaggi
+// 1/2/3 e 18/19 = posizione, 5 / 19 / 24A = nome (6 bit, '@' = fine), frasi a piu' frammenti riassemblate per numero di sequenza.
+// Posizione propria da RMC/GLL/GGA (o dalla VDO). CPA/TCPA e soglie: come in EssentialSail.
+const int AIS_MAX = 48;
+AisT ais[AIS_MAX];
+uint32_t aisRev = 0;                 // cambia a ogni messaggio AIS accettato (per il ridisegno)
+double ownLat = 0, ownLon = 0;
+uint32_t ownPosT = 0;
+Val cogV;                            // rotta sul fondo (RMC / VTG)
+bool ownPosOk() { return ownPosT && millis() - ownPosT < 15000; }
+
+static bool nmeaLatLon(const String &la, const String &ns, const String &lo, const String &ew, double &lat, double &lon) {
+  if (la.length() < 4 || lo.length() < 5 || !ns.length() || !ew.length()) return false;
+  double a = la.toDouble(), b = lo.toDouble();
+  int ad = (int)(a / 100), bd = (int)(b / 100);
+  lat = ad + (a - ad * 100) / 60.0;
+  lon = bd + (b - bd * 100) / 60.0;
+  if (ns[0] == 'S') lat = -lat;
+  if (ew[0] == 'W') lon = -lon;
+  return fabs(lat) <= 90 && fabs(lon) <= 180;
+}
+static void setOwnPos(double lat, double lon) { ownLat = lat; ownLon = lon; ownPosT = millis(); }
+
+static AisT *aisFind(uint32_t mmsi) {
+  AisT *free_ = nullptr, *oldest = &ais[0];
+  for (int i = 0; i < AIS_MAX; i++) {
+    if (ais[i].mmsi == mmsi) return &ais[i];
+    if (!ais[i].mmsi && !free_) free_ = &ais[i];
+    if (ais[i].tSeen < oldest->tSeen) oldest = &ais[i];
+  }
+  AisT *t = free_ ? free_ : oldest;   // tabella piena: si sostituisce la barca sentita meno di recente
+  memset(t, 0, sizeof(AisT));
+  t->mmsi = mmsi;
+  return t;
+}
+
+static uint8_t aisBits[100];   // un valore a 6 bit per carattere
+static int aisBitLen = 0;
+static uint32_t aisU(int start, int len) {
+  uint32_t v = 0;
+  for (int i = 0; i < len; i++) {
+    int b = start + i;
+    v = (v << 1) | ((aisBits[b / 6] >> (5 - b % 6)) & 1);
+  }
+  return v;
+}
+static int32_t aisS(int start, int len) {
+  int64_t v = aisU(start, len);
+  if (v >= ((int64_t)1 << (len - 1))) v -= ((int64_t)1 << len);
+  return (int32_t)v;
+}
+static void aisText(int start, int chars, char *out) {   // 6 bit ASCII: <32 -> +64, '@' = fine, spazi finali tolti
+  int n = 0;
+  for (int i = 0; i < chars; i++) {
+    int cc = aisU(start + i * 6, 6);
+    char ch = cc < 32 ? (char)(cc + 64) : (char)cc;
+    if (ch == '@') break;
+    out[n++] = ch;
+  }
+  while (n > 0 && out[n - 1] == ' ') n--;
+  out[n] = 0;
+}
+
+static void aisSetName(uint32_t mmsi, int start) {
+  char nm[24];
+  aisText(start, 20, nm);
+  if (!nm[0]) return;
+  AisT *t = aisFind(mmsi);
+  strncpy(t->name, nm, 20);
+  t->name[20] = 0;
+  t->tSeen = millis();
+  aisRev++;
+}
+
+static void aisPosition(uint32_t mmsi, bool own, int sogS, int lonS, int latS, int cogS) {
+  double lon = aisS(lonS, 28) / 600000.0, lat = aisS(latS, 27) / 600000.0;
+  if (fabs(lat) > 90.0001 || fabs(lon) > 180.0001) return;     // 91 / 181 = non disponibile
+  if (own) { setOwnPos(lat, lon); return; }
+  uint32_t sg = aisU(sogS, 10), cg = aisU(cogS, 12);
+  AisT *t = aisFind(mmsi);
+  t->lat = lat; t->lon = lon;
+  t->sog = sg >= 1023 ? 0 : sg / 10.0f;
+  t->cog = cg >= 3600 ? 0 : cg / 10.0f;
+  t->hasPos = true;
+  t->tPos = t->tSeen = millis();
+  aisRev++;
+}
+
+static void aisMessage(bool own) {
+  if (aisBitLen < 38) return;
+  int type = aisU(0, 6);
+  uint32_t mmsi = aisU(8, 30);
+  if (!mmsi) return;
+  switch (type) {
+    case 1: case 2: case 3:
+      if (aisBitLen >= 168) aisPosition(mmsi, own, 50, 61, 89, 116);
+      break;
+    case 18:
+      if (aisBitLen >= 168) aisPosition(mmsi, own, 46, 57, 85, 112);
+      break;
+    case 19:   // classe B estesa: posizione + nome
+      if (aisBitLen >= 263) { if (!own) aisSetName(mmsi, 143); aisPosition(mmsi, own, 46, 57, 85, 112); }
+      break;
+    case 5:
+      if (aisBitLen >= 232 && !own) aisSetName(mmsi, 112);
+      break;
+    case 24:   // classe B statico: la parte A (0) contiene il nome (anche se arriva in 160 bit)
+      if (aisBitLen >= 160 && aisU(38, 2) == 0 && !own) aisSetName(mmsi, 40);
+      break;
+  }
+}
+
+// !AIVDM,<frammenti>,<n>,<seq>,<canale>,<payload>,<fill>
+struct AisFrag { bool used; bool own; char seq[4]; String data; };
+static AisFrag aisFrags[4];
+
+static void aisSentence(const String *f, int n, bool own) {
+  if (n < 7) return;
+  int total = f[1].toInt(), num = f[2].toInt();
+  String payload = f[5];
+  if (total < 1 || num < 1 || !payload.length()) return;
+  String full;
+  if (total == 1) {
+    full = payload;
+  } else {
+    char seq[4] = {0};
+    strncpy(seq, f[3].c_str(), 3);
+    AisFrag *slot = nullptr;
+    for (auto &fr : aisFrags) if (fr.used && fr.own == own && !strcmp(fr.seq, seq)) slot = &fr;
+    if (num == 1) {
+      if (!slot) for (auto &fr : aisFrags) if (!fr.used) { slot = &fr; break; }
+      if (!slot) slot = &aisFrags[0];
+      slot->used = true; slot->own = own; strcpy(slot->seq, seq); slot->data = payload;
+      return;
+    }
+    if (!slot) return;
+    slot->data += payload;
+    if (num < total) return;
+    full = slot->data;
+    slot->used = false; slot->data = "";
+  }
+  aisBitLen = 0;
+  for (size_t i = 0; i < full.length() && aisBitLen + 6 <= (int)sizeof(aisBits) * 6; i++) {
+    int v = (uint8_t)full[i] - 48;
+    if (v > 40) v -= 8;
+    if (v < 0 || v > 63) continue;
+    aisBits[aisBitLen / 6] = (uint8_t)v;
+    aisBitLen += 6;
+  }
+  aisMessage(own);
+}
+
+// Elenco delle barche da mostrare, ordinate: prima quelle a rischio, poi per distanza.
+int aisBuild(AisRow *rows, int maxRows) {
+  if (!ownPosOk()) return 0;
+  float oSog = sog.ok() ? sog.v : 0;
+  float oCog = cogV.ok() ? cogV.v : (hdg.ok() ? hdg.v : 0);
+  float ovx = oSog / 60.0f * sinf(oCog * DEG_TO_RAD), ovy = oSog / 60.0f * cosf(oCog * DEG_TO_RAD);   // nm/min
+  int n = 0;
+  uint32_t now = millis();
+  for (int i = 0; i < AIS_MAX; i++) {
+    const AisT &t = ais[i];
+    if (!t.mmsi || !t.hasPos || now - t.tPos > AIS_STALE_MS) continue;
+    double px = (t.lon - ownLon) * 60.0 * cos(ownLat * DEG_TO_RAD);   // nm verso est
+    double py = (t.lat - ownLat) * 60.0;                                              // nm verso nord
+    float dist = (float)sqrt(px * px + py * py);
+    float brg = (float)(atan2(px, py) * RAD_TO_DEG);
+    if (brg < 0) brg += 360;
+    float tvx = t.sog / 60.0f * sinf(t.cog * DEG_TO_RAD), tvy = t.sog / 60.0f * cosf(t.cog * DEG_TO_RAD);
+    double vx = tvx - ovx, vy = tvy - ovy, vv = vx * vx + vy * vy;
+    float cpa = dist, tcpa = -1;
+    if (vv * 3600.0 >= 0.01) {   // < 0,1 nodi di moto relativo: non si avvicina (come CollisionMath)
+      double tm = -(px * vx + py * vy) / vv;       // minuti al punto di minima distanza
+      if (tm > 0) { cpa = (float)sqrt((px + vx * tm) * (px + vx * tm) + (py + vy * tm) * (py + vy * tm)); tcpa = (float)tm; }
+    }
+    bool risk = (cpa < AIS_CPA_NM && tcpa > 0 && tcpa < AIS_TCPA_MIN) || dist < AIS_CLOSE_NM;
+    if (!risk && dist > AIS_WATCH_NM) continue;
+    AisRow r = {&t, dist, brg, cpa, tcpa, risk};
+    int pos = n;   // inserimento ordinato
+    while (pos > 0 && ((r.risk && !rows[pos - 1].risk) || (r.risk == rows[pos - 1].risk && r.dist < rows[pos - 1].dist))) pos--;
+    if (pos >= maxRows) continue;
+    for (int k = min(n, maxRows - 1); k > pos; k--) rows[k] = rows[k - 1];
+    rows[pos] = r;
+    if (n < maxRows) n++;
+  }
+  return n;
+}
+
 // ============================== NMEA 0183 =================================
 // Sentences: MWV, VWR, VWT (vento) - VTG, RMC (SOG) - VHW (STW) - HDT, HDG, HDM (prua) - DBT, DPT, DBK (fondo)
 WiFiClient nmea;
@@ -168,7 +497,7 @@ static float wrap360(float d) {
 }
 
 static bool nmeaChecksumOk(const String &l) {
-  if (l.length() < 6 || l[0] != '$') return false;
+  if (l.length() < 6 || (l[0] != '$' && l[0] != '!')) return false;
   int star = l.indexOf('*');
   if (star < 0) return true;  // senza checksum: accetta
   uint8_t c = 0;
@@ -193,7 +522,8 @@ void handleNmea(const String &raw) {
   nRx++;
   lastLine = raw.substring(0, 70);
   String l = raw;
-  int d0 = l.indexOf('$');
+  int d0 = l.indexOf('$'), d1 = l.indexOf('!');
+  if (d0 < 0 || (d1 >= 0 && d1 < d0)) d0 = d1;
   if (d0 > 0) l = l.substring(d0);
   if (!nmeaChecksumOk(l)) { nBadCs++; return; }
   String f[16];
@@ -202,7 +532,7 @@ void handleNmea(const String &raw) {
   String t = f[0].substring(f[0].length() - 3);
   auto has = [&](int i) { return i < n && f[i].length() > 0; };
   bool known = (t == "MWV" || t == "VWR" || t == "VWT" || t == "VTG" || t == "RMC" || t == "VHW" || t == "HDT" ||
-                t == "HDG" || t == "HDM" || t == "DBT" || t == "DPT" || t == "DBK");
+                t == "HDG" || t == "HDM" || t == "DBT" || t == "DPT" || t == "DBK" || t == "ZDA" || t == "GLL" || t == "GGA" || t == "VDM" || t == "VDO");
   if (known) nOk++; else nUnknown++;
 
   if (t == "MWV") {                    // angolo, R/T, velocita', unita', stato
@@ -220,10 +550,28 @@ void handleNmea(const String &raw) {
     float sp = f[3].toFloat();
     if (t == "VWR") { awa.set(a); aws.set(sp); }
     else { twaS.set(a); twsS.set(sp); }
-  } else if (t == "VTG") {             // SOG nodi = campo 5
+  } else if (t == "VTG") {             // rotta vera = campo 1, SOG nodi = campo 5
+    if (has(1)) cogV.set(wrap360(f[1].toFloat()));
     if (has(5)) sog.set(f[5].toFloat());
-  } else if (t == "RMC") {             // SOG nodi = campo 7
+  } else if (t == "RMC") {             // ora = campo 1, stato = 2, SOG nodi = campo 7, data ddmmyy = 9
     if (has(2) && f[2][0] == 'A' && has(7)) sog.set(f[7].toFloat());
+    if (has(2) && f[2][0] == 'A') {
+      double la, lo;
+      if (n > 6 && nmeaLatLon(f[3], f[4], f[5], f[6], la, lo)) setOwnPos(la, lo);
+      if (has(8)) cogV.set(wrap360(f[8].toFloat()));
+    }
+    if (has(1) && has(2) && f[2][0] == 'A' && has(9) && f[9].length() >= 6)
+      nmeaTime(f[1], f[9].substring(0, 2).toInt(), f[9].substring(2, 4).toInt(), 2000 + f[9].substring(4, 6).toInt());
+  } else if (t == "GLL") {             // lat, N/S, lon, E/W, ora, stato
+    double la, lo;
+    if (n > 4 && (!has(6) || f[6][0] == 'A') && nmeaLatLon(f[1], f[2], f[3], f[4], la, lo)) setOwnPos(la, lo);
+  } else if (t == "GGA") {             // ora, lat, N/S, lon, E/W, qualita'
+    double la, lo;
+    if (n > 6 && has(6) && f[6] != "0" && nmeaLatLon(f[2], f[3], f[4], f[5], la, lo)) setOwnPos(la, lo);
+  } else if (t == "VDM" || t == "VDO") {   // AIS
+    aisSentence(f, n, t == "VDO");
+  } else if (t == "ZDA") {             // hhmmss, giorno, mese, anno
+    if (has(1) && has(2) && has(3) && has(4)) nmeaTime(f[1], f[2].toInt(), f[3].toInt(), f[4].toInt());
   } else if (t == "VHW") {             // hdgT,T,hdgM,M,stw,N,stw,K
     if (has(5)) stw.set(f[5].toFloat());
     else if (has(7)) stw.set(f[7].toFloat() * KMH2KN);
@@ -336,14 +684,16 @@ void configCmd(const String &c);  // webcfg.h
 // stato del tocco
 bool tTouching = false, tWasDown = false, tMoved = false, tLongFired = false;
 int tX = 0, tY = 0, tX0 = 0, tY0 = 0;
-uint32_t tDown = 0;
+uint32_t tDown = 0, lastTapT = 0;
+int lastTapX = 0, lastTapY = 0;
+bool tInBright = false;  // il tocco e' iniziato nell'area luminosita' della pagina batteria
+const int BR_ZONE_Y = 242, BR_TRACK_L = 76, BR_TRACK_R = 334;
 int tKey = -1;  // tasto virtuale premuto (0 UP, 1 DOWN, 2 OK, 3 BACK), -1 = nessuno
 bool tpOk = false;
 
-const int BAR_H = 40;        // barra di stato in alto (dashboard)
 const int HEADER_H = 44;     // intestazione dei menu
 const int KEYBAR_Y = 446;    // tasti virtuali in basso (menu, modifica, scansione, diagnostica)
-const int NIGHT_X = SCR_W - 92, NIGHT_Y = 6, NIGHT_W = 80, NIGHT_H = 28;
+
 
 // Touch FT3168 (I2C 0x38): reset, poi lettura dei registri 0x02..0x06 (numero di tocchi, X, Y)
 void touchInit() {
@@ -382,6 +732,13 @@ int page = 0;
 int menuSel = 0;
 bool dirty = true;
 uint32_t lastRender = 0, lastSig = 0;
+bool screenOn = true;          // schermo acceso (tasto PWR breve = acceso/spento)
+bool alertActive = false;      // allarme collisione in corso (non in snooze)
+bool riskNow = false;          // c'e' almeno una barca in rotta di collisione / molto vicina
+bool shallowNow = false;       // profondita' sotto la soglia di allarme
+uint32_t snoozeUntil = 0;      // BOOT: allarme silenziato fino a questo istante
+uint32_t toastUntil = 0;       // messaggio breve in basso
+const char *toastMsg = "";
 
 // editor testo
 EditT editT = E_PASS;
@@ -415,18 +772,105 @@ static const EsFont *smaller(const EsFont *f) {
   return nullptr;
 }
 
+// Rettangolo con raggio diverso per ogni angolo (riempimento a righe): serve a seguire gli angoli arrotondati del pannello
+static int cornerInset(int dy, int r) {
+  if (r <= 0 || dy >= r) return 0;
+  float d = r - dy - 0.5f;
+  return (int)ceilf(r - sqrtf((float)r * r - d * d));
+}
+void roundRect4(int x, int y, int w, int h, int rtl, int rtr, int rbr, int rbl, uint16_t col) {
+  for (int yy = 0; yy < h; yy++) {
+    int il = max(cornerInset(yy, rtl), cornerInset(h - 1 - yy, rbl));
+    int ir = max(cornerInset(yy, rtr), cornerInset(h - 1 - yy, rbr));
+    if (w - il - ir > 0) cv->drawFastHLine(x + il, y + yy, w - il - ir, col);
+  }
+}
+
+static uint16_t mix565(uint16_t base, uint16_t top, int wTop) {  // wTop 0..256
+  int r = (((base >> 11) & 31) * (256 - wTop) + ((top >> 11) & 31) * wTop) >> 8;
+  int g = (((base >> 5) & 63) * (256 - wTop) + ((top >> 5) & 63) * wTop) >> 8;
+  int b = ((base & 31) * (256 - wTop) + (top & 31) * wTop) >> 8;
+  return (uint16_t)((r << 11) | (g << 5) | b);
+}
+
+// Il framebuffer e' in orientamento fisico: con lo schermo ruotato di 180 gradi gli indici sono speculari
+static inline size_t fbi(int x, int y) {
+  return cfg.rot == 2 ? (size_t)(SCR_H - 1 - y) * SCR_W + (SCR_W - 1 - x) : (size_t)y * SCR_W + x;
+}
+
+// Rettangolo con angoli diversi riempito in trasparenza (alpha 0..256) sopra cio' che c'e' gia' (effetto vetro)
+void roundRectBlend(int x, int y, int w, int h, int rtl, int rtr, int rbr, int rbl, uint16_t col, int alpha) {
+  uint16_t *fb = cv->getFramebuffer();
+  // di notte i widget sono opachi (aspetto originale del tema rosso)
+  if (!fb || cfg.night) { roundRect4(x, y, w, h, rtl, rtr, rbr, rbl, col); return; }
+  for (int yy = 0; yy < h; yy++) {
+    int il = max(cornerInset(yy, rtl), cornerInset(h - 1 - yy, rbl));
+    int ir = max(cornerInset(yy, rtr), cornerInset(h - 1 - yy, rbr));
+    for (int xx = x + il; xx < x + w - ir; xx++) {
+      size_t i = fbi(xx, y + yy);
+      fb[i] = mix565(fb[i], col, alpha);
+    }
+  }
+}
+
+// Solo il bordo (spessore t) di un rettangolo con angoli diversi
+void roundRectRing(int x, int y, int w, int h, int rtl, int rtr, int rbr, int rbl, uint16_t col, int t = 1) {
+  for (int yy = 0; yy < h; yy++) {
+    int il = max(cornerInset(yy, rtl), cornerInset(h - 1 - yy, rbl));
+    int ir = max(cornerInset(yy, rtr), cornerInset(h - 1 - yy, rbr));
+    int xs = x + il, xe = x + w - ir;
+    if (xe <= xs) continue;
+    if (yy < t || yy >= h - t) { cv->drawFastHLine(xs, y + yy, xe - xs, col); continue; }
+    int iy = yy - t, ih = h - 2 * t;
+    int jl = t + max(cornerInset(iy, max(rtl - t, 0)), cornerInset(ih - 1 - iy, max(rbl - t, 0)));
+    int jr = t + max(cornerInset(iy, max(rtr - t, 0)), cornerInset(ih - 1 - iy, max(rbr - t, 0)));
+    int is = x + max(jl, il), ie = x + w - max(jr, ir);
+    if (is >= ie) { cv->drawFastHLine(xs, y + yy, xe - xs, col); continue; }
+    if (is > xs) cv->drawFastHLine(xs, y + yy, is - xs, col);
+    if (xe > ie) cv->drawFastHLine(ie, y + yy, xe - ie, col);
+  }
+}
+
+// Alone morbido (cerchio sfumato in trasparenza)
+static void glow(int cx, int cy, int r, uint16_t col, int a0) {
+  uint16_t *fb = cv->getFramebuffer();
+  if (!fb) return;
+  const long r2 = (long)r * r;
+  for (int y = max(0, cy - r); y <= min(SCR_H - 1, cy + r); y++)
+    for (int x = max(0, cx - r); x <= min(SCR_W - 1, cx + r); x++) {
+      long dx = x - cx, dy = y - cy, d2 = dx * dx + dy * dy;
+      if (d2 >= r2) continue;
+      long f = (r2 - d2) * 256 / r2;
+      int a = (int)(a0 * f / 256 * f / 256);
+      if (a <= 0) continue;
+      size_t i = fbi(x, y);
+      fb[i] = mix565(fb[i], col, a);
+    }
+}
+
+// Sfondo della dashboard: sfumatura verticale + due aloni colorati, sotto le schede trasparenti
+void drawBackdrop() {
+  if (cfg.night) { cv->fillScreen(TH.bg); return; }   // tema notte (rosso): sfondo pieno, niente sfumature ne' trasparenze
+  const uint16_t bot = mix565(TH.bg, TH.pri, 64);
+  for (int y = 0; y < SCR_H; y++) cv->drawFastHLine(0, y, SCR_W, mix565(TH.bg, bot, y * 256 / SCR_H));
+  glow(340, 90, 190, TH.pri, 90);
+  glow(40, 430, 200, TH.acc, 80);
+}
+
 // Scheda: etichetta in alto a sinistra, valore centrato, unita' in basso a destra.
 // Il valore usa il font dato e passa a quelli piu' piccoli finche' ci sta nella scheda.
+// rtl/rtr/rbr/rbl: raggio degli angoli (grande dove la scheda e' vicina a un angolo del pannello, che e' arrotondato).
 void tile(int x, int y, int w, int h, const char *label, const String &val, const char *unit,
-          uint16_t accent, const EsFont *f, uint16_t valCol = 0, bool deg = false) {
-  cv->fillRoundRect(x, y, w, h, 10, TH.card);
-  cv->drawRoundRect(x, y, w, h, 10, TH.border);
-  cv->fillRoundRect(x + 2, y + 10, 4, h - 20, 2, accent);
+          uint16_t accent, const EsFont *f, uint16_t valCol = 0, bool deg = false,
+          int rtl = 10, int rtr = 10, int rbr = 10, int rbl = 10) {
+  roundRectBlend(x, y, w, h, rtl, rtr, rbr, rbl, TH.card, 168);   // vetro: lo sfondo si intravede
+  roundRectRing(x, y, w, h, rtl, rtr, rbr, rbl, TH.border, 1);
+  (void)accent;   // niente barra colorata a sinistra
   tFont(&F_TEXT_S);
   tColor(TH.mfg);
-  tAt(x + 14, y + 7 + F_TEXT_S.capH, label);
+  tC(label, x + w / 2, y + 9 + F_TEXT_S.capH);   // titolo centrato
   int reserve = (unit && *unit) ? 28 : 0;
-  if (unit && *unit) { tFont(&F_TEXT); tR(unit, x + w - 8, y + h - 9); }
+  if (unit && *unit) { tFont(&F_TEXT); tR(unit, x + w - (rbr > 12 ? (int)(rbr * 0.65f) : 8), y + h - 9); }
   String v = deg ? val + DEG : val;
   tFont(f);
   while ((tWidth(v) > w - 22 - reserve || esFont->capH > h - 30) && smaller(esFont)) tFont(smaller(esFont));
@@ -482,7 +926,8 @@ void drawKeybar() {
   tFont(&F_HEAD);
   for (int i = 0; i < 4; i++) {
     bool pressed = tTouching && tKey == i;
-    int x = i * w + 5, y = KEYBAR_Y + 7, bw = w - 10, bh = SCR_H - KEYBAR_Y - 17;
+    const int inset = (i == 0 || i == 3) ? 10 : 0;  // i tasti agli estremi stanno lontani dagli angoli arrotondati
+    int x = i * w + 5 + (i == 0 ? inset : 0), y = KEYBAR_Y + 7, bw = w - 10 - inset, bh = SCR_H - KEYBAR_Y - 22;
     cv->fillRoundRect(x, y, bw, bh, 12, pressed ? TH.pri : TH.bg);
     cv->drawRoundRect(x, y, bw, bh, 12, TH.pri);
     tColor(pressed ? TH.card : TH.pri);
@@ -498,158 +943,138 @@ void hint(const char *l1, const char *l2 = nullptr) {
   else tAt(10, KEYBAR_Y - 8, l1);
 }
 
-// Barra di stato in alto: [pallino STATO]  [legenda]  [pagina n/N]  [DAY/NIGHT]
+// Niente barra del titolo: in basso solo i puntini della pagina; se non arrivano dati NMEA da
+// piu' di DATA_STALE_MS (pagine vento e navigazione) compare la filigrana arancione "SEGNALE PERSO".
+bool dataLive() {
+  return awa.ok() || aws.ok() || twaS.ok() || twsS.ok() || sog.ok() || stw.ok() || depth.ok() || hdg.ok();
+}
+
+
+// Testo semitrasparente al centro dello schermo: si disegna il testo, poi i pixel cambiati
+// (testo + bordi anti-aliasing) vengono miscelati con quelli che c'erano prima.
+void drawWatermark(const char *text) {
+  const int h = 56, y0 = (SCR_H - h) / 2;   // banda simmetrica: vale anche con lo schermo ruotato di 180 gradi
+  uint16_t *fb = cv->getFramebuffer();
+  const size_t n = (size_t)SCR_W * h;
+  uint16_t *snap = fb ? (uint16_t *)heap_caps_malloc(n * 2, MALLOC_CAP_SPIRAM) : nullptr;
+  if (snap) memcpy(snap, fb + (size_t)y0 * SCR_W, n * 2);
+  tFont(&F_HEAD_L);
+  tColor(TH.warn);
+  tCC(text, SCR_W / 2, SCR_H / 2);
+  if (!snap) return;
+  uint16_t *dst = fb + (size_t)y0 * SCR_W;
+  for (size_t i = 0; i < n; i++)
+    if (dst[i] != snap[i]) dst[i] = mix565(snap[i], dst[i], 190);   // ~75% di arancione
+  free(snap);
+}
+
 void drawStatusBar() {
-  cv->fillRect(0, 0, SCR_W, BAR_H, TH.card);
-  cv->drawFastHLine(0, BAR_H - 1, SCR_W, TH.border);
-  bool live = statusLive();
-  const char *st = live ? "LIVE" : (WiFi.status() != WL_CONNECTED ? "NO WIFI" : (srvUp ? "NO DATA" : "NO SERVER"));
-  uint16_t sc = live ? TH.ok : TH.bad;
-  const int cy = BAR_H / 2;
-  tFont(&F_TEXT);
-  const int base = cy + F_TEXT.capH / 2;
-  if (live) cv->fillCircle(16, cy, 6, sc); else cv->drawCircle(16, cy, 6, sc);
-  tColor(sc);
-  tAt(28, base, st);
-  int cur = 28 + tWidth(st) + 14;
-  if (page == 0) {
-    tFont(&F_TEXT_S);
-    const int b2 = cy + F_TEXT_S.capH / 2;
-    cv->fillTriangle(cur, cy + 6, cur + 11, cy + 6, cur + 5, cy - 6, TH.pri);
-    tColor(TH.fg);
-    tAt(cur + 15, b2, "App.");
-    cur += 15 + tWidth("App.") + 10;
-    cv->drawCircle(cur + 5, cy, 5, TH.acc);
-    cv->drawCircle(cur + 5, cy, 4, TH.acc);
-    tAt(cur + 15, b2, "True");
-  }
-  tFont(&F_TEXT);
-  tColor(TH.fg);
-  tR(String(page + 1) + "/" + String(NUM_PAGES), NIGHT_X - 8, base);
-
-  // pulsante giorno/notte: mostra il tema a cui si passa
-  cv->fillRoundRect(NIGHT_X, NIGHT_Y, NIGHT_W, NIGHT_H, 8, TH.pri);
+  uint32_t now = millis();
+  bool snz = snoozeUntil && (int32_t)(snoozeUntil - now) > 0;
   tFont(&F_TEXT_S);
-  tColor(TH.card);
-  tCC(cfg.night ? "DAY" : "NIGHT", NIGHT_X + NIGHT_W / 2, NIGHT_Y + NIGHT_H / 2);
-}
-
-// ============================== Vele ======================================
-// Regole dal Manuale di vela del Centro Velico Caprera (tav. 9, 29), le stesse di SailTrim.kt:
-// - le andature sono riferite al vento APPARENTE (AWA);
-// - dalla bolina al lasco le vele tengono circa lo stesso angolo col vento;
-// - sotto LUFF_ANGLE (angolo morto) le vele sono in bando e sbattono;
-// - oltre WING_ANGLE il genoa va a farfalla sull'altro lato, col tangone;
-// - vento leggero = vele grasse, vento forte = vele magre;
-// - carrello del genoa: avanti con poco vento, indietro con vento forte, avanti quando si lasca.
-#define LUFF_ANGLE 24.0f
-#define WING_ANGLE 150.0f
-
-static float mainsailAngle(float awaAbs) { return constrain(8 + (awaAbs - 28) * (77.0f / 122.0f), 8.0f, 85.0f); }
-static float genoaAngle(float awaAbs) { return constrain(10 + (awaAbs - 28) * (60.0f / 122.0f), 10.0f, 70.0f); }
-
-// posizione suggerita del carrello del genoa: 1 = tutto avanti ... 5 = tutto indietro, 0 = non si applica
-static int genoaCarStep(float awaAbs, float tws) {
-  if (awaAbs < 22 || awaAbs > WING_ANGLE) return 0;
-  int s = tws < 8 ? 2 : tws < 14 ? 3 : tws < 20 ? 4 : 5;
-  if (awaAbs > 60) s--;
-  if (awaAbs > 100) s--;
-  return constrain(s, 1, 5);
-}
-
-// vela vista dall'alto: corda P0-P1, pancia di profondita' depth*corda verso (wx, wy) = dove soffia il vento
-static void drawSailShape(float x0, float y0, float x1, float y1, float depth, float wx, float wy) {
-  float dx = x1 - x0, dy = y1 - y0, len = sqrtf(dx * dx + dy * dy);
-  if (len < 1) return;
-  float nx = -dy / len, ny = dx / len;
-  if (nx * wx + ny * wy < 0) { nx = -nx; ny = -ny; }
-  float qx = (x0 + x1) / 2 + nx * 2 * depth * len, qy = (y0 + y1) / 2 + ny * 2 * depth * len;
-  int px = lroundf(x0), py = lroundf(y0);
-  for (int i = 1; i <= 24; i++) {
-    float t = i / 24.0f, u = 1 - t;
-    int x = lroundf(u * u * x0 + 2 * u * t * qx + t * t * x1);
-    int y = lroundf(u * u * y0 + 2 * u * t * qy + t * t * y1);
-    cv->fillTriangle(lroundf(x0), lroundf(y0), px, py, x, y, TH.sail);  // vela piena
-    cv->drawLine(px, py, x, y, TH.fg);
-    px = x; py = y;
-  }
-}
-
-// vela in bando: linea ondulata lungo l'asse
-static void drawLuffing(int x, int y0, int y1, int amp) {
-  int px = x, py = y0;
-  for (int y = y0 + 3; y <= y1; y += 3) {
-    int nx = x + lroundf(amp * sinf((y - y0) * 0.35f));
-    cv->drawLine(px, py, nx, y, TH.fg);
-    cv->drawLine(px + 1, py, nx + 1, y, TH.fg);
-    px = nx; py = y;
-  }
-}
-
-// Disegno delle vele; tutte le misure sono scalate da k (1 = disegno originale da 800x480)
-void drawSails(int cx, int cy, float k, bool haveAwa, float aw, bool haveTws, float tws) {
-  const float mastY = cy - 25 * k, tackY = cy - 96 * k;
-  const float boomLen = 85 * k, genoaLen = 105 * k;
-  float a = fabsf(aw);
-  int sgn = aw >= 0 ? 1 : -1;  // +1 vento da dritta
-  int lee = -sgn;              // lato sottovento sullo schermo (+x = dritta)
-
-  if (!haveAwa || a < LUFF_ANGLE) {
-    if (haveAwa) {
-      drawLuffing(cx, mastY + 4, mastY + boomLen, 4);
-      drawLuffing(cx, tackY + 4, mastY - 6, 3);
-    } else {
-      cv->drawLine(cx, mastY, cx, mastY + boomLen, TH.fg);
-      cv->drawLine(cx, tackY, cx, mastY - 6, TH.fg);
+  if (alertActive) {
+    tColor(TH.bad);
+    tCC("BOOT = SNOOZE 5 MIN", SCR_W / 2, SCR_H - 14);
+  } else if (snz && (riskNow || shallowNow)) {
+    int left = (int)((snoozeUntil - now) / 1000);
+    char b[40]; snprintf(b, sizeof b, "ALARM SNOOZED  %d:%02d", left / 60, left % 60);
+    tColor(TH.mfg);
+    tCC(b, SCR_W / 2, SCR_H - 14);
+  } else if (toastUntil && (int32_t)(toastUntil - now) > 0) {
+    tColor(TH.mfg);
+    tCC(toastMsg, SCR_W / 2, SCR_H - 14);
+  } else {
+    for (int i = 0; i < NUM_PAGES; i++) {
+      int px = SCR_W / 2 + (int)((i - (NUM_PAGES - 1) * 0.5f) * 14);
+      if (i == page) cv->fillCircle(px, SCR_H - 14, 3, TH.pri); else cv->drawCircle(px, SCR_H - 14, 3, TH.mfg);
     }
-    cv->fillCircle(cx, mastY, 5 * k, TH.fg);
-    return;
   }
-
-  // direzione verso cui soffia il vento apparente (coord. schermo, y verso il basso)
-  float wr = aw * DEG_TO_RAD, wx = -sinf(wr), wy = cosf(wr);
-  // pancia: grassa con vento leggero, magra con vento forte
-  float depth = !haveTws ? 0.11f : tws < 8 ? 0.15f : tws < 16 ? 0.11f : 0.07f;
-
-  // genoa (disegnato prima: la randa gli sta sopra)
-  bool wing = a > WING_ANGLE;
-  float g = wing ? 80 : genoaAngle(a);
-  int gside = wing ? sgn : lee;  // a farfalla va sopravvento
-  float clx = cx + gside * sinf(g * DEG_TO_RAD) * genoaLen, cly = tackY + cosf(g * DEG_TO_RAD) * genoaLen;
-  drawSailShape(cx, tackY, clx, cly, depth, wx, wy);
-  if (wing) {  // tangone dall'albero alla bugna
-    cv->drawLine(cx, mastY, lroundf(clx), lroundf(cly), TH.fg);
-    cv->drawLine(cx, mastY + 1, lroundf(clx), lroundf(cly) + 1, TH.fg);
-  }
-
-  // carrello del genoa sulla rotaia sottovento
-  int step = haveTws ? genoaCarStep(a, tws) : 0;
-  if (step) {
-    int tx = cx + lee * 23 * k, ty0 = cy + 5 * k;
-    cv->drawLine(tx, ty0, tx, ty0 + 40 * k, TH.fg);
-    for (int i = 0; i < 5; i++) cv->drawLine(tx - 3, lroundf(ty0 + i * 10 * k), tx + 3, lroundf(ty0 + i * 10 * k), TH.fg);
-    int carY = lroundf(ty0 + (step - 1) * 10 * k);
-    cv->fillRect(tx - 4, carY - 4, 9, 9, TH.fg);
-    cv->drawLine(lroundf(clx), lroundf(cly), tx, carY, TH.fg);  // scotta
-  }
-
-  // randa
-  float m = mainsailAngle(a) * DEG_TO_RAD;
-  float bx = cx + lee * sinf(m) * boomLen, by = mastY + cosf(m) * boomLen;
-  drawSailShape(cx, mastY, bx, by, depth, wx, wy);
-  cv->drawLine(cx, mastY, lroundf(bx), lroundf(by), TH.fg);  // boma
-  cv->drawLine(cx + 1, mastY, lroundf(bx) + 1, lroundf(by), TH.fg);
-  cv->fillCircle(cx, mastY, 6 * k, TH.fg);
-  cv->fillCircle(cx, mastY, 3 * k, TH.card);
+  if (page > 0 && page != PAGE_BATT && !dataLive()) drawWatermark("SEGNALE PERSO");
+  // allarme collisione: cornice rossa lampeggiante che segue le curve dello schermo
+  if (alertActive && ((now / 500) & 1)) roundRectRing(0, 0, SCR_W, SCR_H, PANEL_CORNER_R, PANEL_CORNER_R, PANEL_CORNER_R, PANEL_CORNER_R, TH.bad, 6);
 }
 
-// ============================== Pagina 1: vento ===========================
+// ============================== Pagina 1: ora e data ======================
+// Lancetta affusolata: dalla coda (dietro il centro) alla punta, larghezza max w a meta' della base.
+static void drawHand(int cx, int cy, float deg, float len, float tail, float w, uint16_t col) {
+  float a = deg * DEG_TO_RAD;
+  float dx = sinf(a), dy = -cosf(a), nx = -dy, ny = dx;
+  int tx = lroundf(cx + dx * len), ty = lroundf(cy + dy * len);
+  int bx = lroundf(cx - dx * tail), by = lroundf(cy - dy * tail);
+  int lx = lroundf(cx + nx * w), ly = lroundf(cy + ny * w);
+  int rx = lroundf(cx - nx * w), ry = lroundf(cy - ny * w);
+  cv->fillTriangle(tx, ty, lx, ly, rx, ry, col);
+  cv->fillTriangle(bx, by, lx, ly, rx, ry, col);
+}
+
+// Orologio analogico senza riquadri di sfondo: anello sottile, tacche, 12-3-6-9, lancette, data piccola sotto.
+void pageClock() {
+  const int cx = SCR_W / 2, cy = 240;
+  const float R = 176;
+  bool ok = clockValid();
+  time_t now = time(nullptr);
+  struct tm tmv;
+  localtime_r(&now, &tmv);
+
+  // anello e tacche (60 minuti; ogni 5 piu' lunga e scura)
+  cv->drawCircle(cx, cy, R, TH.border);
+  cv->drawCircle(cx, cy, R - 1, TH.border);
+  int x0, y0, x1, y1;
+  for (int i = 0; i < 60; i++) {
+    bool hr = (i % 5 == 0);
+    pol(cx, cy, R - 8, i * 6, x0, y0);
+    pol(cx, cy, R - (hr ? 26 : 16), i * 6, x1, y1);
+    cv->drawLine(x0, y0, x1, y1, hr ? TH.fg : TH.mfg);
+    if (hr) {
+      cv->drawLine(x0 + 1, y0, x1 + 1, y1, TH.fg);
+      cv->drawLine(x0, y0 + 1, x1, y1 + 1, TH.fg);
+    }
+  }
+  // numeri 12 - 3 - 6 - 9
+  tFont(&F_HEAD_L);
+  tColor(TH.pri);
+  int lx, ly;
+  const char *nums[4] = {"12", "3", "6", "9"};
+  for (int i = 0; i < 4; i++) {
+    pol(cx, cy, R - 58, i * 90, lx, ly);
+    tCC(nums[i], lx, ly);
+  }
+
+  if (ok) {
+    float sec = tmv.tm_sec;
+    float minA = (tmv.tm_min + sec / 60.0f) * 6.0f;
+    float hrA = ((tmv.tm_hour % 12) + tmv.tm_min / 60.0f) * 30.0f;
+    drawHand(cx, cy, hrA, R * 0.50f, 14, 5.5f, TH.fg);
+    drawHand(cx, cy, minA, R * 0.76f, 16, 4.0f, TH.fg);
+    drawHand(cx, cy, sec * 6.0f, R * 0.88f, 30, 1.3f, TH.pri);   // lancetta dei secondi, sottile, con contrappeso
+    cv->fillCircle(cx, cy, 8, TH.fg);
+    cv->fillCircle(cx, cy, 4, TH.pri);
+  } else {
+    tFont(&F_TEXT);
+    tColor(TH.mfg);
+    tCC("NO TIME", cx, cy);
+  }
+
+  // data, piccola, sotto il quadrante
+  if (ok) {
+    char buf[40];
+    strftime(buf, sizeof buf, "%A  %d %B %Y", &tmv);
+    tFont(&F_TEXT);
+    tColor(TH.mfg);
+    tCC(buf, cx, cy + R + 36);
+  }
+  drawStatusBar();
+}
+
+// ============================== Pagina 2: vento ===========================
+// Quadrante con la rosa dei venti che ruota con la prua, AWA (triangolo blu) e TWA (triangolo giallo);
+// al centro prua, AWS e TWS (al posto del disegno della barca). Niente schede AWA/TWA: gli angoli sono nel quadrante.
 void pageWind() {
-  const int cx = SCR_W / 2, cy = 200;
-  const float R = 148, k = R / 228.0f;  // il quadrante e' disegnato in proporzione al vecchio 800x480
+  const int cx = SCR_W / 2, cy = 246;   // quadrante grande, centrato
+  const float R = 188, k = R / 228.0f;  // il quadrante e' disegnato in proporzione al vecchio 800x480
   float hd = hdg.ok() ? hdg.v : 0;
 
-  // disco e anello: dritta (scuro) / sinistra (chiaro) sul lato da cui arriva il vento apparente
+  // disco e anello: dritta (verde) / sinistra (rosso) sul lato da cui arriva il vento apparente
   cv->fillCircle(cx, cy, R, TH.card);
   cv->drawCircle(cx, cy, R, TH.border);
   cv->drawCircle(cx, cy, R - 1, TH.border);
@@ -682,122 +1107,217 @@ void pageWind() {
     tCC(s, lx, ly);
   }
 
-  // barca (fissa, prua in alto)
-  static const int8_t hull[][2] = {{0, -100}, {22, -60}, {30, 0}, {26, 60}, {18, 92}, {-18, 92}, {-26, 60}, {-30, 0}, {-22, -60}};
-  const int nh = sizeof(hull) / sizeof(hull[0]);
-  for (int i = 0; i < nh; i++) {
-    int j = (i + 1) % nh;
-    int ax = lroundf(cx + hull[i][0] * k), ay = lroundf(cy + hull[i][1] * k);
-    int bx = lroundf(cx + hull[j][0] * k), by = lroundf(cy + hull[j][1] * k);
-    cv->drawLine(ax, ay, bx, by, TH.hull);
-    cv->drawLine(ax + 1, ay, bx + 1, by, TH.hull);
-  }
-
-  // vele (stesse regole di SailTrim.kt nell'app)
-  float ta0 = 0, ts0 = 0;
-  bool haveTrue = getTrue(ta0, ts0);
-  drawSails(cx, cy, k, awa.ok(), awa.ok() ? awa.v : 0, haveTrue, ts0);
-
-  // vento apparente: puntatore + linea tratteggiata
+  // vento apparente: puntatore + breve linea tratteggiata (si ferma prima dei valori al centro)
+  float ta = 0, ts = 0;
+  bool haveTrue = getTrue(ta, ts);
   if (awa.ok()) {
-    dashRadial(cx, cy, awa.v, R - 52 * k, 112 * k, TH.pri);
+    dashRadial(cx, cy, awa.v, R - 52 * k, 100, TH.pri);
     pointerTri(cx, cy, awa.v, R - 16 * k, R - 52 * k, 3.6f, TH.pri);
   }
-  // vento reale: anello colorato
-  float ta, ts;
-  if (getTrue(ta, ts)) {
-    int mx, my;
-    pol(cx, cy, R - 34 * k, ta, mx, my);
-    cv->fillCircle(mx, my, 10, TH.card);
-    cv->drawCircle(mx, my, 10, TH.acc);
-    cv->drawCircle(mx, my, 9, TH.acc);
-    cv->drawCircle(mx, my, 8, TH.acc);
+  // vento reale: triangolo giallo con contorno scuro (sopra il puntatore blu del vento apparente)
+  if (haveTrue) {
+    int tx, ty, bx0, by0, bx1, by1;
+    pol(cx, cy, R - 46 * k, ta, tx, ty);
+    pol(cx, cy, R - 16 * k, ta - 3.4f, bx0, by0);
+    pol(cx, cy, R - 16 * k, ta + 3.4f, bx1, by1);
+    cv->fillTriangle(tx, ty, bx0, by0, bx1, by1, TH.yel);
+    cv->drawTriangle(tx, ty, bx0, by0, bx1, by1, TH.fg);
   }
 
-  // prua (heading) al centro in alto
+  // centro: prua, AWS (apparente), TWS (reale)
   tFont(&F_TEXT_S);
   tColor(TH.mfg);
-  tC("HEADING", cx, cy - 62 - F_HEAD_M.capH - 8);   // appena sopra il valore della prua
+  tCC("HEADING", cx, cy - 88);
   tFont(&F_HEAD_M);
   tColor(TH.fg);
   if (hdg.ok()) {
     char b[5]; snprintf(b, sizeof b, "%03d", ((int)lroundf(hd)) % 360);
-    tC(String(b) + DEG + " " + cardinal(hd), cx, cy - 62);
-  } else tC("--", cx, cy - 62);
+    tCC(String(b) + DEG + " " + cardinal(hd), cx, cy - 68);
+  } else tCC("--", cx, cy - 68);
 
-  // schede sotto il quadrante
-  tile(10, 356, 192, 68, "AWS  apparent", fv(aws), "kn", TH.pri, &F_NUM_L);
-  String tsStr = getTrue(ta, ts) ? String(ts, 1) : String("--");
-  tile(208, 356, 192, 68, "TWS  true", tsStr, "kn", TH.acc, &F_NUM_L);
-  String awaS = awa.ok() ? String((int)lroundf(fabsf(awa.v))) : String("--");
-  String twaStr = getTrue(ta, ts) ? String((int)lroundf(fabsf(ta))) : String("--");
-  tile(10, 430, 126, 64, "SOG", fv(sog), "kn", TH.mfg, &F_NUM_M);
-  tile(142, 430, 126, 64, "AWA", awaS, "", awa.ok() && awa.v >= 0 ? TH.ok : TH.bad, &F_NUM_M, 0, awa.ok());
-  tile(274, 430, 126, 64, "TWA", twaStr, "", getTrue(ta, ts) && ta >= 0 ? TH.ok : TH.bad, &F_NUM_M, 0,
-       getTrue(ta, ts));
+  tFont(&F_TEXT_S);
+  tColor(TH.mfg);
+  tCC("AWS  apparent  kn", cx, cy - 40);
+  tFont(&F_NUM_L);
+  tColor(TH.fg);
+  tCC(fv(aws), cx, cy - 12);
+
+  tFont(&F_TEXT_S);
+  tColor(TH.mfg);
+  tCC("TWS  true  kn", cx, cy + 20);
+  tFont(&F_NUM_L);
+  tColor(TH.fg);
+  tCC(haveTrue ? String(ts, 1) : String("--"), cx, cy + 50);
+
+  // leggenda sotto il quadrante: triangolo blu = vento apparente, triangolo giallo = vento reale
+  {
+    const int ly = cy + (int)R + 26, ih = 12;
+    tFont(&F_TEXT_S);
+    int w1 = tWidth("Apparent wind"), w2 = tWidth("True wind");
+    int total = 12 + 6 + w1 + 22 + 12 + 6 + w2;
+    int lx = cx - total / 2;
+    cv->fillTriangle(lx + 6, ly - ih / 2 - 1, lx, ly + ih / 2 - 1, lx + 12, ly + ih / 2 - 1, TH.pri);
+    tColor(TH.fg);
+    tAt(lx + 18, ly + F_TEXT_S.capH / 2 - 1, "Apparent wind");
+    lx += 18 + w1 + 22;
+    cv->fillTriangle(lx + 6, ly - ih / 2 - 1, lx, ly + ih / 2 - 1, lx + 12, ly + ih / 2 - 1, TH.yel);
+    cv->drawTriangle(lx + 6, ly - ih / 2 - 1, lx, ly + ih / 2 - 1, lx + 12, ly + ih / 2 - 1, TH.fg);
+    tColor(TH.fg);
+    tAt(lx + 18, ly + F_TEXT_S.capH / 2 - 1, "True wind");
+  }
+
   drawStatusBar();
 }
 
-// ============================== Pagina 2: profondita' =====================
+// ============================== Pagina 3: SOG e profondita' ===============
 bool depthAlarming() { return depth.ok() && depth.v < cfg.depthAlarm; }
 
-void pageDepth() {
+void pageSpeedDepth() {
   bool al = depthAlarming();
-  tile(10, 48, 390, 150, "DEPTH  below transducer", fv(depth), "m", al ? TH.bad : TH.pri, &F_NUM_XL,
-       al ? TH.bad : TH.fg);
-  tile(10, 206, 192, 84, "BELOW KEEL", fv(keel), "m", TH.acc, &F_NUM_L);
-  String lab = "ALARM  < " + String(cfg.depthAlarm, 1) + " m";
-  tile(208, 206, 192, 84, lab.c_str(), al ? String("ALARM") : String("OK"), "", al ? TH.bad : TH.ok, &F_HEAD_L,
-       al ? TH.bad : TH.fg);
+  const int m = 12, big = PANEL_CORNER_R - m, sm = 12;  // raggio grande = concentrico all'angolo del pannello
+  tile(m, m, SCR_W - 2 * m, 234, "SOG  speed over ground", fv(sog), "kn", TH.pri, &F_NUM_XL, 0, false, big, big, sm, sm);
+  String dl = "DEPTH  below transducer";
+  if (keel.ok()) dl += "   keel " + String(keel.v, 1) + " m";
+  tile(m, 252, SCR_W - 2 * m, 220, dl.c_str(), fv(depth), "m", al ? TH.bad : TH.acc, &F_NUM_XL, al ? TH.bad : TH.fg,
+       false, sm, sm, big, big);
+  drawStatusBar();
+}
 
-  // grafico storico
-  cv->fillRoundRect(10, 298, 390, 196, 10, TH.card);
-  cv->drawRoundRect(10, 298, 390, 196, 10, TH.border);
-  float mn = NAN, mx = NAN;
-  for (int i = 0; i < HN; i++) if (!isnan(hist[i])) {
-    if (isnan(mn) || hist[i] < mn) mn = hist[i];
-    if (isnan(mx) || hist[i] > mx) mx = hist[i];
-  }
-  tFont(&F_TEXT_S);
-  tColor(TH.mfg);
-  String hdr = "LAST 30 MIN";
-  if (!isnan(mn)) hdr += "    MIN " + String(mn, 1) + "   MAX " + String(mx, 1) + " m";
-  tAt(24, 322, hdr);
+// ============================== Pagina 4: AIS =============================
+// Distanza leggibile: metri sotto 0,1 nm, altrimenti miglia nautiche.
+static String aisDist(float nm) {
+  char b[16];
+  if (nm < 0.1f) snprintf(b, sizeof b, "%d m", (int)lroundf(nm * 1852.0f));
+  else if (nm < 10) snprintf(b, sizeof b, "%.2f nm", nm);
+  else snprintf(b, sizeof b, "%.1f nm", nm);
+  return String(b);
+}
 
-  const int px0 = 50, px1 = 384, py0 = 344, py1 = 450;
-  float maxScale = 5;
-  if (!isnan(mx)) maxScale = max(5.0f, ceilf(mx * 1.25f));
-  if (cfg.depthAlarm > maxScale) maxScale = ceilf(cfg.depthAlarm * 1.2f);
-  maxScale = ceilf(maxScale / 2) * 2;  // pari: la tacca di mezzo e' un numero intero
-  // griglia (0 in alto = superficie)
-  for (int g = 0; g <= 2; g++) {
-    int gy = py0 + g * (py1 - py0) / 2;
-    for (int gx = px0; gx < px1; gx += 10) cv->drawFastHLine(gx, gy, 5, TH.border);
-    tR(String(maxScale * g / 2, 0), px0 - 8, gy + 5);
+void pageAis() {
+  AisRow rows[AIS_MAX_ROWS];
+  int n = aisBuild(rows, AIS_MAX_ROWS);
+  const int m = 12, gap = 6, rowH = 88, big = PANEL_CORNER_R - m, sm = 12;
+  if (n == 0) {
+    tFont(&F_HEAD);
+    tColor(TH.fg);
+    tCC(ownPosOk() ? "NO AIS TARGETS NEARBY" : "NO OWN POSITION", SCR_W / 2, SCR_H / 2 - 12);
+    tFont(&F_TEXT_S);
+    tColor(TH.mfg);
+    tCC(ownPosOk() ? "No boat in collision course or within 3 nm" : "Needs GPS position from NMEA (RMC / GLL / GGA)", SCR_W / 2, SCR_H / 2 + 18);
+    drawStatusBar();
+    return;
   }
-  // soglia di allarme
-  if (cfg.depthAlarm < maxScale) {
-    int ay = py0 + (int)lroundf(cfg.depthAlarm / maxScale * (py1 - py0));
-    cv->drawFastHLine(px0, ay, px1 - px0, TH.bad);
-    cv->drawFastHLine(px0, ay + 1, px1 - px0, TH.bad);
-    cv->fillTriangle(px0 - 2, ay, px0 - 11, ay - 5, px0 - 11, ay + 5, TH.bad);
+  for (int i = 0; i < n; i++) {
+    const AisRow &r = rows[i];
+    int y = m + i * (rowH + gap);
+    int rt = (i == 0) ? big : sm, rb = (i == AIS_MAX_ROWS - 1) ? big : sm;   // angoli grandi solo vicino agli angoli del pannello
+    uint16_t border = r.risk ? TH.bad : TH.border, fill = r.risk ? TH.badbg : TH.card;
+    roundRectBlend(m, y, SCR_W - 2 * m, rowH, rt, rt, rb, rb, fill, r.risk ? 206 : 168);
+    roundRectRing(m, y, SCR_W - 2 * m, rowH, rt, rt, rb, rb, border, r.risk ? 2 : 1);
+    char idb[24];
+    String nm = r.t->name[0] ? String(r.t->name) : (snprintf(idb, sizeof idb, "MMSI %lu", (unsigned long)r.t->mmsi), String(idb));
+    String d = aisDist(r.dist);
+    tFont(&F_HEAD);
+    int maxW = SCR_W - 2 * m - 60 - tWidth(d) - 14;
+    while (nm.length() > 3 && tWidth(nm) > maxW) nm.remove(nm.length() - 1);
+    const int b1 = y + 36;
+    const int gw = tWidth(nm) + 14 + tWidth(d);       // nome + distanza, centrati come gruppo
+    const int xs = SCR_W / 2 - gw / 2;
+    tColor(r.risk ? TH.bad : TH.fg);
+    tAt(xs, b1, nm);
+    tColor(r.risk ? TH.bad : TH.pri);
+    tAt(xs + tWidth(nm) + 14, b1, d);          // distanza accanto al nome
+
+    char l2[64];
+    if (r.tcpa > 0) snprintf(l2, sizeof l2, "CPA %s in %d min    %.1f kn", aisDist(r.cpa).c_str(), (int)lroundf(r.tcpa), r.t->sog);
+    else snprintf(l2, sizeof l2, "Not approaching    %.1f kn", r.t->sog);
+    tFont(&F_TEXT);
+    tColor(r.risk ? TH.bad : TH.mfg);
+    tCC(l2, SCR_W / 2, y + 64);
   }
-  // curva
-  int lx = -1, ly = -1;
-  for (int i = 0; i < HN; i++) {
-    if (isnan(hist[i])) { lx = -1; continue; }
-    int gx = px0 + i * (px1 - px0) / (HN - 1);
-    int gy = py0 + (int)lroundf(min(hist[i], maxScale) / maxScale * (py1 - py0));
-    if (lx >= 0) {
-      cv->drawLine(lx, ly, gx, gy, TH.pri);
-      cv->drawLine(lx, ly + 1, gx, gy + 1, TH.pri);
+  drawStatusBar();
+}
+
+// ============================== Pagina 5: batteria ========================
+// Stessa impostazione della schermata batteria di EssentialSail: icona BatteryChargingFull, barra con gradiente
+// (e fulmine in carica), badge di stato con icona CheckCircle / Warning / Error e testo GOOD / LOW / CRITICAL.
+void drawIcon(const EsIcon &ic, int x, int y, uint16_t col, int alpha = 256) {
+  uint16_t *fb = cv->getFramebuffer();
+  if (!fb) return;
+  for (int yy = 0; yy < ic.h; yy++)
+    for (int xx = 0; xx < ic.w; xx++) {
+      int a = (ic.a[yy * ic.w + xx] * alpha) >> 8;
+      if (!a) continue;
+      size_t i = fbi(x + xx, y + yy);
+      fb[i] = mix565(fb[i], col, a);
     }
-    lx = gx; ly = gy;
+}
+
+static uint16_t battColor(int lvl) {   // 0 buona, 1 bassa, 2 critica
+  if (cfg.night) return lvl == 0 ? TH.fg : (lvl == 1 ? TH.warn : TH.bad);
+  return lvl == 0 ? rgb565(102, 187, 106) : (lvl == 1 ? rgb565(255, 183, 77) : rgb565(239, 83, 80));
+}
+
+void pageBattery() {
+  const int m = 12, big = PANEL_CORNER_R - m, sm = 12, cx = SCR_W / 2;
+  bool known = batt.ok && batt.present && batt.pct >= 0;
+  int pct = known ? batt.pct : 0;
+  uint16_t col = battColor(!known ? 2 : (pct >= 30 ? 0 : (pct >= 15 ? 1 : 2)));
+
+  // ---- meta' alta: icona batteria con la percentuale (come EssentialSail: corpo con gradiente, polo, fulmine in carica)
+  roundRectBlend(m, m, SCR_W - 2 * m, 224, big, big, sm, sm, TH.card, 168);
+  roundRectRing(m, m, SCR_W - 2 * m, 224, big, big, sm, sm, TH.border, 1);
+  const int bw = 290, bh = 116, bx = cx - bw / 2 - 6, by = 66;
+  roundRectBlend(bx, by, bw, bh, 20, 20, 20, 20, TH.bg, 150);
+  roundRectRing(bx, by, bw, bh, 20, 20, 20, 20, TH.border, 2);
+  int fw = (bw - 12) * pct / 100;
+  for (int i = 0; i < fw; i++) {
+    int top = max(cornerInset(i, 14), cornerInset(fw - 1 - i, 14));
+    uint16_t cc = mix565(mix565(TH.bg, col, 180), col, i * 256 / max(fw, 1));
+    cv->drawFastVLine(bx + 6 + i, by + 6 + top, bh - 12 - 2 * top, cc);
   }
+  roundRect4(bx + bw + 3, by + bh / 2 - 22, 11, 44, 0, 6, 6, 0, TH.mfg);   // polo della batteria
+  String num = known ? String(pct) : String("--");
+  tFont(&F_NUM_XL);
+  int wn = tWidth(num), cap = esFont->capH;
+  tFont(&F_HEAD_L);
+  int wp = tWidth("%");
+  int bolt = batt.charging ? 38 : 0;
+  int x0 = bx + bw / 2 - (bolt + wn + 6 + wp) / 2;
+  uint16_t tcol = pct > 50 ? TH.bg : TH.fg;   // leggibile sul riempimento chiaro e sullo sfondo scuro
+  if (batt.charging) drawIcon(IC_BOLT_30, x0, by + bh / 2 - 15, tcol);
+  tFont(&F_NUM_XL);
+  tColor(tcol);
+  tAt(x0 + bolt, by + bh / 2 + cap / 2, num);
+  tFont(&F_HEAD_L);
+  tAt(x0 + bolt + wn + 6, by + bh / 2 + cap / 2, "%");
+
+  // ---- meta' bassa: luminosita' (toccare / trascinare per regolarla)
+  roundRectBlend(m, 242, SCR_W - 2 * m, 236, sm, sm, big, big, TH.card, 168);
+  roundRectRing(m, 242, SCR_W - 2 * m, 236, sm, sm, big, big, TH.border, 1);
+  drawIcon(IC_SUN_64, cx - 32, 266, TH.pri);
+  char pb[8];
+  snprintf(pb, sizeof pb, "%d", (int)cfg.bright);
+  tFont(&F_NUM_L);
+  int wb = tWidth(pb), capb = esFont->capH;
+  tFont(&F_HEAD);
+  int wpc = tWidth("%");
+  int xb = cx - (wb + 4 + wpc) / 2;
+  tFont(&F_NUM_L);
+  tColor(TH.fg);
+  tAt(xb, 372 + capb / 2, pb);
+  tFont(&F_HEAD);
   tColor(TH.mfg);
-  tAt(px0, 480, "-30 min");
-  tC("-15", (px0 + px1) / 2, 480);
-  tR("now", px1, 480);
+  tAt(xb + wb + 4, 372 + capb / 2, "%");
+  // cursore
+  const int ty = 424, tl = BR_TRACK_L, tr = BR_TRACK_R;
+  roundRect4(tl, ty - 5, tr - tl, 10, 5, 5, 5, 5, TH.border);
+  int kx = tl + (cfg.bright - 5) * (tr - tl) / 95;
+  roundRect4(tl, ty - 5, max(kx - tl, 0), 10, 5, 5, 5, 5, TH.pri);
+  cv->fillCircle(kx, ty, 15, TH.card);
+  cv->fillCircle(kx, ty, 11, TH.pri);
+  drawIcon(IC_MOON_28, tl - 40, ty - 14, TH.mfg);
+  drawIcon(IC_SUN_28, tr + 14, ty - 14, TH.mfg);
   drawStatusBar();
 }
 
@@ -806,7 +1326,7 @@ void drawHeader(const char *t) {
   cv->fillRect(0, 0, SCR_W, HEADER_H, TH.pri);
   tFont(&F_HEAD);
   tColor(TH.card);
-  tAt(14, HEADER_H / 2 + F_HEAD.capH / 2, t);
+  tCC(t, SCR_W / 2, HEADER_H / 2);   // titolo al centro, lontano dagli angoli arrotondati
 }
 
 const char *MENU_LABELS[] = {"WiFi network", "WiFi password", "NMEA server IP", "Port", "Depth alarm",
@@ -1004,7 +1524,7 @@ void showMsg(const char *l1, const char *l2 = "") {
 void render() {
   cv->fillScreen(TH.bg);
   switch (mode) {
-    case M_DASH: if (page == 0) pageWind(); else pageDepth(); break;
+    case M_DASH: drawBackdrop(); if (page == 0) pageClock(); else if (page == 1) pageWind(); else if (page == 2) pageSpeedDepth(); else if (page == PAGE_AIS) pageAis(); else pageBattery(); break;
     case M_MENU: drawMenu(); drawKeybar(); break;
     case M_EDIT: drawEdit(); drawKeybar(); break;
     case M_SCAN: drawScan(); drawKeybar(); break;
@@ -1025,6 +1545,9 @@ uint32_t sig() {
     h = (h ^ (uint32_t)i) * 16777619u;
   };
   add(aws, 10); add(awa, 1); add(twaS, 1); add(twsS, 10); add(sog, 10); add(stw, 10); add(hdg, 1); add(depth, 10); add(keel, 10);
+  if (page == PAGE_AIS) h = (h ^ aisRev) * 16777619u;
+  if (page == PAGE_BATT) h = (h ^ (uint32_t)(batt.pct + 200) ^ (uint32_t)(batt.mv / 10) ^ (batt.charging << 20) ^ (batt.vbus << 21) ^ ((uint32_t)cfg.bright << 24)) * 16777619u;
+  if (page == 0) h = (h ^ (uint32_t)time(nullptr)) * 16777619u;   // l'orologio si ridisegna ogni secondo
   h = (h ^ (uint32_t)(srvUp ? 1 : 0) ^ (uint32_t)(page << 4) ^ (uint32_t)(mode << 6) ^ (uint32_t)(cfg.night << 9)) * 16777619u;
   return h;
 }
@@ -1216,7 +1739,7 @@ void handleKeys(Ev eu, Ev ed, Ev eo, Ev eb) {
 }
 
 // ============================== Tocco: gesti e tasti ======================
-// Nella dashboard: swipe = pagina, pressione lunga = menu, tocco su DAY/NIGHT = tema.
+// Nella dashboard: swipe = pagina, pressione lunga = menu, doppio tocco = tema giorno/notte.
 // Nei menu: i 4 tasti virtuali in basso (tenendo premuto UP/DOWN ripetono).
 void touchEvents(Ev &eu, Ev &ed, Ev &eo, Ev &eb) {
   eu = ed = eo = eb = EV_NONE;
@@ -1225,7 +1748,20 @@ void touchEvents(Ev &eu, Ev &ed, Ev &eo, Ev &eb) {
   if (down && !tWasDown) {  // inizio del tocco
     tDown = now; tX0 = tX; tY0 = tY; tMoved = false; tLongFired = false;
     tKey = (mode != M_DASH && tY >= KEYBAR_Y) ? min(3, tX / (SCR_W / 4)) : -1;
+    tInBright = (mode == M_DASH && page == PAGE_BATT && tY >= BR_ZONE_Y);
     dirty = true;
+  }
+  if (tInBright) {   // regolazione della luminosita': niente cambio pagina, menu o doppio tocco
+    if (down) {
+      int pct = constrain(5 + (tX - BR_TRACK_L) * 95 / (BR_TRACK_R - BR_TRACK_L), 5, 100);
+      if (pct != cfg.bright) { cfg.bright = pct; applyBrightness(); dirty = true; }
+    } else if (tWasDown) {
+      saveCfg();
+      tInBright = false;
+      dirty = true;
+    }
+    tWasDown = down;
+    return;
   }
   if (down) {
     if (abs(tX - tX0) > TAP_SLOP_PX || abs(tY - tY0) > TAP_SLOP_PX) tMoved = true;
@@ -1238,9 +1774,14 @@ void touchEvents(Ev &eu, Ev &ed, Ev &eo, Ev &eb) {
       int dx = tX - tX0;
       if (tMoved && abs(dx) >= SWIPE_MIN_PX && now - tDown <= SWIPE_MAX_MS) {
         if (dx < 0) ed = EV_SHORT; else eu = EV_SHORT;   // swipe a sinistra = pagina successiva
-      } else if (!tMoved && !tLongFired && tX0 >= NIGHT_X && tX0 < NIGHT_X + NIGHT_W &&
-                 tY0 >= NIGHT_Y && tY0 < NIGHT_Y + NIGHT_H) {
-        eb = EV_SHORT;
+      } else if (!tMoved && !tLongFired) {  // tocco breve: due di seguito = giorno/notte
+        if (lastTapT && now - lastTapT <= DOUBLE_TAP_MS && abs(tX0 - lastTapX) <= DOUBLE_TAP_PX &&
+            abs(tY0 - lastTapY) <= DOUBLE_TAP_PX) {
+          eb = EV_SHORT;
+          lastTapT = 0;
+        } else {
+          lastTapT = now; lastTapX = tX0; lastTapY = tY0;
+        }
       }
     }
     tKey = -1;
@@ -1259,10 +1800,87 @@ void touchEvents(Ev &eu, Ev &ed, Ev &eo, Ev &eb) {
   }
 }
 
+// ============================== Pulsanti, allarme collisione, snooze ======
+void screenSet(bool on) {
+  if (on == screenOn) return;
+  screenOn = on;
+  if (on) { lcd->displayOn(); applyBrightness(); dirty = true; }
+  else lcd->displayOff();
+}
+bool snoozed() { return snoozeUntil && (int32_t)(snoozeUntil - millis()) > 0; }
+void showToast(const char *m, uint32_t ms = 3000) { toastMsg = m; toastUntil = millis() + ms; dirty = true; }
+void snoozeAlarm() {   // tasto BOOT: silenzia l'allarme per 5 minuti
+  if (!screenOn) screenSet(true);
+  snoozeUntil = millis() + SNOOZE_MS;
+  if (!snoozeUntil) snoozeUntil = 1;
+  alertActive = false;
+  if (VIB_PIN >= 0) digitalWrite(VIB_PIN, LOW);
+  showToast("Alarm snoozed for 5 minutes");
+  dirty = true;
+}
+void pwrShortPress() { screenSet(!screenOn); }   // tasto PWR breve: schermo acceso / spento
+
+void buttonsLoop() {
+  static bool pwrDown = false, pwrFired = false, pwrArmed = false, bootDown = (digitalRead(BOOT_PIN) == LOW);   // BOOT gia' premuto all'accensione: si ignora finche' non viene rilasciato
+  static uint32_t pwrT = 0, bootT = 0, lowSince = 0;
+  uint32_t now = millis();
+  bool p = digitalRead(PWR_PIN) == HIGH;
+  if (!p) { if (!lowSince) lowSince = now; if (now - lowSince > 200) pwrArmed = true; } else lowSince = 0;
+  // "armato" solo dopo aver visto il tasto a riposo: se il livello fosse invertito non spegne mai da solo
+  if (pwrArmed) {
+    if (p && !pwrDown) { pwrDown = true; pwrFired = false; pwrT = now; }
+    if (p && pwrDown && !pwrFired && now - pwrT >= PWR_OFF_HOLD_MS) { pwrFired = true; powerOff(); }
+    if (!p && pwrDown) {
+      pwrDown = false;
+      if (!pwrFired && now - pwrT >= 40) pwrShortPress();
+    }
+  }
+  bool b = digitalRead(BOOT_PIN) == LOW;
+  if (b && !bootDown && now - bootT > 150) { bootDown = true; bootT = now; snoozeAlarm(); }
+  if (!b && bootDown && now - bootT > 40) bootDown = false;
+}
+
+void alertLoop() {
+  static uint32_t lastChk = 0, vibT = 0, lastSecond = 0;
+  static bool vibOn = false, phase = false;
+  uint32_t now = millis();
+  if (now - lastChk >= 1000) {
+    lastChk = now;
+    AisRow rows[AIS_MAX_ROWS];
+    int n = aisBuild(rows, AIS_MAX_ROWS);
+    bool risk = false;
+    for (int i = 0; i < n; i++) if (rows[i].risk) risk = true;
+    riskNow = risk;
+    shallowNow = depthAlarming();
+  }
+  bool want = (riskNow || shallowNow) && !snoozed();
+  if (want && !alertActive) {   // nuovo allarme: accende lo schermo e mostra l'elenco AIS
+    alertActive = true;
+    if (!screenOn) screenSet(true);
+    if (mode == M_DASH) page = riskNow ? PAGE_AIS : 2;   // collisione: elenco AIS; profondita' insufficiente: pagina SOG / profondita'
+    vibT = now - ALERT_EVERY_MS;
+    dirty = true;
+  } else if (!want && alertActive) {
+    alertActive = false;
+    dirty = true;
+  }
+  if (VIB_PIN >= 0) {   // impulsi del motorino (se collegato)
+    if (alertActive && !vibOn && now - vibT >= ALERT_EVERY_MS) { vibOn = true; vibT = now; digitalWrite(VIB_PIN, HIGH); }
+    if (vibOn && (!alertActive || now - vibT >= ALERT_PULSE_MS)) { vibOn = false; digitalWrite(VIB_PIN, LOW); }
+  }
+  bool ph = (now / 500) & 1;
+  if (alertActive && ph != phase) { phase = ph; dirty = true; }   // cornice lampeggiante
+  if ((snoozed() && (riskNow || shallowNow)) || (toastUntil && (int32_t)(toastUntil - now) > 0)) {
+    if (now - lastSecond >= 1000) { lastSecond = now; dirty = true; }
+  } else if (toastUntil && (int32_t)(toastUntil - now) <= 0) { toastUntil = 0; dirty = true; }
+}
+
 // ============================== Spegnimento ===============================
 // Schermo spento e deep sleep. Per riaccendere: tasto BOOT o RESET sulla scheda.
 void powerOff() {
   Serial.println("Power off");
+  if (cv) { showMsg("Powering off...", ""); delay(600); }
+  if (VIB_PIN >= 0) digitalWrite(VIB_PIN, LOW);
   nmea.stop();
   WiFi.disconnect(true, false);
   WiFi.mode(WIFI_OFF);
@@ -1270,7 +1888,8 @@ void powerOff() {
   cv->flush();
   lcd->displayOff();
   delay(200);
-  esp_sleep_enable_ext0_wakeup((gpio_num_t)WAKE_PIN, 0);  // tasto BOOT (a massa) riaccende
+  if (pmuShutdown()) { delay(1000); }   // spegnimento vero: si riaccende con un clic su PWR
+  esp_sleep_enable_ext0_wakeup((gpio_num_t)WAKE_PIN, 0);  // senza PMU: deep sleep, tasto BOOT (a massa) riaccende
   esp_deep_sleep_start();
 }
 
@@ -1288,10 +1907,12 @@ void setup() {
                 FW_VERSION, (int)esp_reset_reason());
   loadCfg();
   applyTheme();
+  applyTz();
+  sntp_set_time_sync_notification_cb(onNtpSync);
   for (int i = 0; i < HN; i++) hist[i] = NAN;
 
   if (!lcd->begin()) haltWithError("LCD init failed (QSPI CO5300)");
-  lcd->setBrightness(255);
+  applyBrightness();
   PsramCanvas *pc = new PsramCanvas(SCR_W, SCR_H, lcd, cfg.rot == 2 ? 2 : 0);
   if (!pc->initBuffer()) haltWithError("Canvas: cannot allocate 400 KB in PSRAM (PSRAM = OPI? see README)");
   cv = pc;
@@ -1299,6 +1920,15 @@ void setup() {
 
   touchInit();
   if (!tpOk) Serial.println("FT3168 not found: touch disabled");
+  pinMode(BOOT_PIN, INPUT_PULLUP);
+  pinMode(PWR_PIN, INPUT);
+  if (VIB_PIN >= 0) { pinMode(VIB_PIN, OUTPUT); digitalWrite(VIB_PIN, LOW); }
+  pmuInit();
+  pmuPoll();
+  Serial.printf("PMU %s, battery %s %d%% %d mV\n", pmuOk ? "ok" : "NOT FOUND", batt.present ? "present" : "absent", batt.pct, batt.mv);
+  time_t rt;
+  if (rtcRead(rt)) { struct timeval tv = {rt, 0}; settimeofday(&tv, nullptr); Serial.println("RTC: time restored"); }
+  else Serial.println("RTC: no valid time");
 
 #if NMEA_WIRED
   Serial1.begin(NMEA_BAUD, SERIAL_8N1, NMEA_RX_PIN, NMEA_TX_PIN);
@@ -1316,6 +1946,11 @@ void setup() {
 }
 
 void loop() {
+  static bool ntpStarted = false;
+  if (!ntpStarted && WiFi.status() == WL_CONNECTED) {
+    ntpStarted = true;
+    configTzTime(cfg.tz.c_str(), "pool.ntp.org", "time.google.com");
+  }
   netLoop();
 #if NMEA_WIRED
   serialLoop();
@@ -1323,9 +1958,24 @@ void loop() {
   serialCmdLoop();
   netCfgLoop();
 
+  buttonsLoop();
+  alertLoop();
+  static uint32_t lastPmu = 0, lastRtcW = 0;
+  if (millis() - lastPmu >= 3000) { lastPmu = millis(); pmuPoll(); }
+  if (rtcDirty && millis() - lastRtcW >= 600000UL) { rtcDirty = false; lastRtcW = millis(); time_t tn = time(nullptr); if (clockValid()) rtcWrite(tn); }
+
   readTouch();
-  Ev eu, ed, eo, eb;
-  touchEvents(eu, ed, eo, eb);
+  static bool touchWake = false;
+  Ev eu = EV_NONE, ed = EV_NONE, eo = EV_NONE, eb = EV_NONE;
+  if (!screenOn) {                       // schermo spento: un tocco lo riaccende (e non fa altro)
+    if (tTouching) { screenSet(true); touchWake = true; }
+    tWasDown = tTouching;
+  } else if (touchWake) {
+    if (!tTouching) touchWake = false;
+    tWasDown = tTouching;
+  } else {
+    touchEvents(eu, ed, eo, eb);
+  }
   if (eu || ed || eo || eb) handleKeys(eu, ed, eo, eb);
 
   uint32_t now = millis();
@@ -1349,7 +1999,7 @@ void loop() {
   }
 
   // ridisegno: subito se c'e' un evento, altrimenti quando cambiano i dati (o ogni FULL_REDRAW_MS)
-  if (now - lastRender >= 60 && (dirty || (now - lastRender >= REFRESH_MS && sig() != lastSig) ||
+  if (screenOn && now - lastRender >= 60 && (dirty || (now - lastRender >= REFRESH_MS && sig() != lastSig) ||
                                  now - lastRender >= FULL_REDRAW_MS)) {
     render();
   }

@@ -1,0 +1,86 @@
+"""Genera EssentialViewS3/es_icons.h: icone a 8 bit (solo trasparenza) per la pagina batteria.
+
+Sono le stesse icone Material usate da EssentialSail: Bolt (batteria in carica, BatteryScreen.kt),
+LightMode e DarkMode (luminosita'). Percorsi SVG da google/material-design-icons (Apache License 2.0).
+Uso:  python tools/make_icons.py
+"""
+import os, re
+from PIL import Image, ImageDraw, ImageChops
+
+ICONS = {
+    "BOLT": "M11 21h-1l1-7H7.5c-.58 0-.57-.32-.38-.66.19-.34.05-.08.07-.12C8.48 10.94 10.42 7.54 13 3h1l-1 7h3.5c.49 0 .56.33.47.51l-.07.15C12.96 17.55 11 21 11 21z",
+    "SUN": "M12,7c-2.76,0-5,2.24-5,5s2.24,5,5,5s5-2.24,5-5S14.76,7,12,7L12,7z M2,13l2,0c0.55,0,1-0.45,1-1s-0.45-1-1-1l-2,0 c-0.55,0-1,0.45-1,1S1.45,13,2,13z M20,13l2,0c0.55,0,1-0.45,1-1s-0.45-1-1-1l-2,0c-0.55,0-1,0.45-1,1S19.45,13,20,13z M11,2v2 c0,0.55,0.45,1,1,1s1-0.45,1-1V2c0-0.55-0.45-1-1-1S11,1.45,11,2z M11,20v2c0,0.55,0.45,1,1,1s1-0.45,1-1v-2c0-0.55-0.45-1-1-1 C11.45,19,11,19.45,11,20z M5.99,4.58c-0.39-0.39-1.03-0.39-1.41,0c-0.39,0.39-0.39,1.03,0,1.41l1.06,1.06 c0.39,0.39,1.03,0.39,1.41,0s0.39-1.03,0-1.41L5.99,4.58z M18.36,16.95c-0.39-0.39-1.03-0.39-1.41,0c-0.39,0.39-0.39,1.03,0,1.41 l1.06,1.06c0.39,0.39,1.03,0.39,1.41,0c0.39-0.39,0.39-1.03,0-1.41L18.36,16.95z M19.42,5.99c0.39-0.39,0.39-1.03,0-1.41 c-0.39-0.39-1.03-0.39-1.41,0l-1.06,1.06c-0.39,0.39-0.39,1.03,0,1.41s1.03,0.39,1.41,0L19.42,5.99z M7.05,18.36 c0.39-0.39,0.39-1.03,0-1.41c-0.39-0.39-1.03-0.39-1.41,0l-1.06,1.06c-0.39,0.39-0.39,1.03,0,1.41s1.03,0.39,1.41,0L7.05,18.36z",
+    "MOON": "M12,3c-4.97,0-9,4.03-9,9s4.03,9,9,9s9-4.03,9-9c0-0.46-0.04-0.92-0.1-1.36c-0.98,1.37-2.58,2.26-4.4,2.26 c-2.98,0-5.4-2.42-5.4-5.4c0-1.81,0.89-3.42,2.26-4.4C12.92,3.04,12.46,3,12,3L12,3z",
+}
+SIZES = {"BOLT": [30], "SUN": [64, 28], "MOON": [28]}
+
+NUM = re.compile(r"-?(?:\d+\.?\d*|\.\d+)(?:e-?\d+)?")
+
+
+def bez(p0, p1, p2, p3, n=24):
+    out = []
+    for i in range(1, n + 1):
+        t = i / n; u = 1 - t
+        out.append((u**3 * p0[0] + 3 * u * u * t * p1[0] + 3 * u * t * t * p2[0] + t**3 * p3[0],
+                    u**3 * p0[1] + 3 * u * u * t * p1[1] + 3 * u * t * t * p2[1] + t**3 * p3[1]))
+    return out
+
+
+def subpaths(d):
+    """Poligoni (liste di punti) di un percorso SVG con M m L l H h V v C c S s Z z."""
+    toks = re.findall(r"[MmLlHhVvCcSsZz]|" + NUM.pattern, d)
+    i = 0; cmd = None; x = y = sx = sy = 0.0; lastc = None
+    polys = []; cur = []
+    def num():
+        nonlocal i
+        v = float(toks[i]); i += 1; return v
+    while i < len(toks):
+        if re.fullmatch(r"[A-Za-z]", toks[i]): cmd = toks[i]; i += 1
+        elif cmd in "Mm": cmd = "L" if cmd == "M" else "l"
+        if cmd in "Zz":
+            if cur: polys.append(cur); cur = []
+            x, y = sx, sy; lastc = None; continue
+        rel = cmd.islower(); c = cmd.upper()
+        if c == "M":
+            if cur: polys.append(cur)
+            a, b = num(), num(); x, y = (x + a, y + b) if rel else (a, b); sx, sy = x, y; cur = [(x, y)]; lastc = None
+        elif c == "L":
+            a, b = num(), num(); x, y = (x + a, y + b) if rel else (a, b); cur.append((x, y)); lastc = None
+        elif c == "H":
+            a = num(); x = x + a if rel else a; cur.append((x, y)); lastc = None
+        elif c == "V":
+            a = num(); y = y + a if rel else a; cur.append((x, y)); lastc = None
+        elif c == "C":
+            v = [num() for _ in range(6)]
+            if rel: v = [v[0] + x, v[1] + y, v[2] + x, v[3] + y, v[4] + x, v[5] + y]
+            cur += bez((x, y), (v[0], v[1]), (v[2], v[3]), (v[4], v[5])); lastc = (v[2], v[3]); x, y = v[4], v[5]
+        elif c == "S":
+            v = [num() for _ in range(4)]
+            if rel: v = [v[0] + x, v[1] + y, v[2] + x, v[3] + y]
+            c1 = (2 * x - lastc[0], 2 * y - lastc[1]) if lastc else (x, y)
+            cur += bez((x, y), c1, (v[0], v[1]), (v[2], v[3])); lastc = (v[0], v[1]); x, y = v[2], v[3]
+    if cur: polys.append(cur)
+    return polys
+
+
+def render(d, size, ss=8):
+    big = size * ss; k = big / 24.0
+    mask = Image.new("L", (big, big), 0)
+    for poly in subpaths(d):   # riempimento pari-dispari: i sotto-percorsi si sottraggono (fori)
+        m = Image.new("L", (big, big), 0)
+        ImageDraw.Draw(m).polygon([(px * k, py * k) for px, py in poly], fill=255)
+        mask = ImageChops.logical_xor(mask.convert("1"), m.convert("1")).convert("L")
+    return mask.resize((size, size), Image.LANCZOS)
+
+
+out = ["// Generato da tools/make_icons.py: icone Material (Apache 2.0) come in EssentialSail. Non modificare a mano.",
+       "#pragma once", "struct EsIcon { const uint8_t *a; uint8_t w, h; };", ""]
+for name, d in ICONS.items():
+    for s in SIZES[name]:
+        data = list(render(d, s).getdata())
+        out.append(f"static const uint8_t IC_{name}_{s}_a[] = {{" + ",".join(str(v) for v in data) + "};")
+        out.append(f"static const EsIcon IC_{name}_{s} = {{IC_{name}_{s}_a, {s}, {s}}};")
+here = os.path.dirname(os.path.abspath(__file__))
+target = os.path.join(here, "..", "EssentialViewS3", "es_icons.h")
+open(target, "w", newline="\n").write("\n".join(out) + "\n")
+print("scritto", os.path.normpath(target), sum(len(SIZES[n]) for n in SIZES), "icone")
