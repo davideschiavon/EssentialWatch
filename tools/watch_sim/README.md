@@ -32,3 +32,5 @@ The second tab talks to the real watch:
 3. **Screen of the watch** - live mirror (needs Pillow), PNG save, the same buttons as the watch (right, left, double tap, power; snooze only over the network), and the USB log with a command line (`CSTATUS`, `CGET`, `S`, `U D O L B K`, `H<ip>:<port>`).
 
 The Tools tab remembers the watch IP and the admin password (plain text in `~/.essentialwatch_sim.json`).
+
+The NMEA server starts by itself when the window opens (use `--no-autostart` to disable it); the watch reconnects without pressing Start.

@@ -984,6 +984,8 @@ def run_gui(args):
         root.after(1000, tick)
 
     tick()
+    if not args.no_autostart:
+        toggle_server()   # the watch reconnects by itself: no need to press Start
     if args.scenario:
         scn_v.set(SCEN[args.scenario].title)
         pick()
@@ -1009,6 +1011,7 @@ if __name__ == "__main__":
     ap.add_argument("--headless", action="store_true", help="no window: NMEA server only")
     ap.add_argument("--scenario", choices=list(SCEN), help="start with this scenario")
     ap.add_argument("--port", type=int, default=10112)
+    ap.add_argument("--no-autostart", action="store_true", help="window only: do not start the NMEA server at launch")
     ap.add_argument("--seconds", type=float, default=3600, help="headless run time")
     a = ap.parse_args()
     run_headless(a) if a.headless else run_gui(a)
