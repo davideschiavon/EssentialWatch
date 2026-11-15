@@ -31,6 +31,12 @@ wakes the screen. BOOT snoozes it for 5 minutes. **The board has no vibration mo
 through a transistor to a free pad (GPIO 1, 2, 3, 17, 18, 21, 43, 44, 47 or 48) and set the pin on the web page ("Vibration motor GPIO", with a
 "Test vibration" button) or `VIB_PIN` in `EssentialViewS3/config.h`. It pulses (300 ms every 1.5 s) while the alarm is active; BOOT stops it.
 
+## Simulator
+
+`tools/watch_sim/` is a pretend boat for the watch: NMEA server with AIS targets and scenarios (coastal, Corsica collisions,
+shallow shelf, storm, collision / shallow-water / signal-lost drills) and a panel that drives the real watch (live screen, keys, status).
+See `tools/watch_sim/README.md`.
+
 ## Web page (port 80)
 
 Login admin with **Digest authentication** (the password is never sent in clear text; Basic is refused). The factory password is `admin`
