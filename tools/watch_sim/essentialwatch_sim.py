@@ -502,6 +502,26 @@ class SerialLink:
         return self._img
 
 # ============================== window ==============================
+SETTINGS_FILE = os.path.join(os.path.expanduser("~"), ".essentialwatch_sim.json")
+
+
+def load_settings():
+    try:
+        with open(SETTINGS_FILE, encoding="utf-8") as f:
+            return json.load(f)
+    except (OSError, ValueError):
+        return {}
+
+
+def save_settings(d):
+    """Remembers the watch IP, its web password and the connection mode (plain text in the user profile)."""
+    try:
+        with open(SETTINGS_FILE, "w", encoding="utf-8") as f:
+            json.dump(d, f)
+    except OSError:
+        pass
+
+
 def local_ip():
     try:
         s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -654,7 +674,13 @@ def run_gui(args):
     own_lbl.pack(anchor="w", **pad)
 
     # ---------------- Tools tab: link to the real watch (network or USB), its address, screen mirror, console ----------------
-    mode_v, host_v, pw_v = tk.StringVar(value="net"), tk.StringVar(), tk.StringVar()
+    saved = load_settings()
+    mode_v, host_v, pw_v = tk.StringVar(value=saved.get("mode", "net")), tk.StringVar(value=saved.get("host", "")), tk.StringVar(value=saved.get("password", ""))
+    if mode_v.get() == "usb":
+        mode_v.set("net")   # the USB link must be opened again by hand
+
+    def remember():
+        save_settings({"mode": mode_v.get(), "host": host_v.get().strip(), "password": pw_v.get()})
     live_v, busy, dev = tk.BooleanVar(value=True), {"n": False}, {"link": None, "img": None, "ip": ""}
     try:
         from serial.tools import list_ports
@@ -702,7 +728,7 @@ def run_gui(args):
         img.load()
         return img
 
-    USB_KEYS = {"right": "U", "left": "D", "dtap": "B", "power": "P"}
+    USB_KEYS = {"right": "U", "left": "D", "dtap": "B", "power": "P", "vibtest": "Y"}
 
     def dev_key(k):
         if mode_v.get() == "usb":
@@ -896,6 +922,7 @@ def run_gui(args):
                     det_lbl.config(text=f"{e}")
                 else:
                     show_result(*r)
+                    remember()
             bg(work, done)
         mirror_poll.job = root.after(3500 if usb else 2000, mirror_poll)
     mirror_poll.job = None
@@ -928,7 +955,7 @@ def run_gui(args):
     if args.scenario:
         scn_v.set(SCEN[args.scenario].title)
         pick()
-    root.protocol("WM_DELETE_WINDOW", lambda: (server.stop(), root.destroy()))
+    root.protocol("WM_DELETE_WINDOW", lambda: (remember(), server.stop(), root.destroy()))
     root.mainloop()
 
 

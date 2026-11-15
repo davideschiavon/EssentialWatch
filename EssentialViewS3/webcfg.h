@@ -29,6 +29,8 @@ String cfgJson() {
   d["host"] = hostTemp ? savedHost : cfg.host;   // always the saved server
   d["port"] = hostTemp ? savedPort : cfg.port;
   d["dalarm"] = serialized(String(cfg.depthAlarm, 1));
+  d["cpa"] = serialized(String(cfg.cpaNm, 2));
+  d["tcpa"] = serialized(String(cfg.tcpaMin, 0));
   d["night"] = cfg.night;
   d["rot"] = cfg.rot;
   d["tz"] = cfg.tz;
@@ -53,6 +55,8 @@ String backupJson() {
   d["host"] = hostTemp ? savedHost : cfg.host;
   d["port"] = hostTemp ? savedPort : cfg.port;
   d["dalarm"] = serialized(String(cfg.depthAlarm, 1));
+  d["cpa"] = serialized(String(cfg.cpaNm, 2));
+  d["tcpa"] = serialized(String(cfg.tcpaMin, 0));
   d["night"] = cfg.night;
   d["rot"] = cfg.rot;
   d["tz"] = cfg.tz;
@@ -161,6 +165,16 @@ String applyCfg(const String &body, bool &needRestart, bool fromWeb = false) {
     float a = d["dalarm"].as<float>();
     if (a < 0 || a > 100) return "depth alarm: 0-100 m";
     n.depthAlarm = a;
+  }
+  if (!d["cpa"].isNull()) {
+    float a = d["cpa"].as<float>();
+    if (a < 0.05f || a > 5) return "collision CPA: 0.05-5 nm";
+    n.cpaNm = a;
+  }
+  if (!d["tcpa"].isNull()) {
+    float a = d["tcpa"].as<float>();
+    if (a < 1 || a > 120) return "collision TCPA: 1-120 min";
+    n.tcpaMin = a;
   }
   if (!d["night"].isNull()) n.night = d["night"].as<bool>();
   if (!d["rot"].isNull()) n.rot = d["rot"].as<int>() == 2 ? 2 : 0;

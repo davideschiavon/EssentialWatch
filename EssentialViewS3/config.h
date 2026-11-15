@@ -5,7 +5,7 @@
 //  (ESP32-S3, 2.06" 410x502 QSPI CO5300 AMOLED, FT3168 touch, AXP2101 PMU)
 // ---------------------------------------------------------------
 
-#define FW_VERSION "2.4.0-s3"
+#define FW_VERSION "2.4.1-s3"
 
 // Logical resolution of the interface (same as the panel, portrait)
 #define SCR_W 410
@@ -80,9 +80,9 @@
 #define PWR_OFF_HOLD_MS 4000   // PWR held pressed: powers the watch off (AXP2101 PMU)
 #define SNOOZE_MS 300000UL     // BOOT: silences the collision alarm for 5 minutes
 
-// Collision alarm: the board has NO vibration motor. If you wire one (with a transistor) to a free GPIO,
-// put the pin number here (or set it from the web page): it pulses while the alarm is active. -1 = no motor (the on-screen alarm remains).
-#define VIB_PIN -1
+// Collision alarm: the vibration motor pulses while the alarm is active (pin can also be set from the web page).
+// -1 = no motor (the on-screen alarm remains).
+#define VIB_PIN 18   // the board schematic routes the vibration motor to GPIO18 ("MOTOR" net); -1 = off
 #define ALERT_PULSE_MS 300
 #define ALERT_EVERY_MS 1500
 

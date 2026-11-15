@@ -2,6 +2,13 @@
 
 Every version is published as a GitHub Release (firmware .bin + these notes); the watch web page lists them.
 
+## 2.4.1
+
+- Vibration: the board **does** have a motor. The Waveshare schematic routes it to **GPIO18** ("MOTOR" net), so GPIO18 is now the default `VIB_PIN` (2.4.0 wrongly said the board had no motor). Alarms pulse it 300 ms every 1.5 s; BOOT snoozes it. The web page "Test vibration" button checks it.
+- **Collision threshold** in the settings (watch menu "Collision CPA" / "Collision TCPA" and web page): a boat that will pass closer than the CPA (default 0.3 nm) within the TCPA (default 15 min), or is already closer than the CPA, turns red and starts the alarm and the vibration.
+- Simulator: new **Tools** tab (USB or network link, device address, screen mirror, USB log); it remembers the watch IP and password.
+- USB command `Y` runs the vibration test (used by the simulator Tools tab).
+
 ## 2.4.0
 
 - Web login hardening: HTTP **Digest** authentication replaces Basic (the password no longer travels in clear text); clients that only speak Basic (old scripts: use `curl --digest`) are refused.

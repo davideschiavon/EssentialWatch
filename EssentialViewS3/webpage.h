@@ -89,6 +89,9 @@ legend{font-family:"Baloo 2",system-ui,sans-serif;font-weight:700;color:var(--pr
 <fieldset><legend>Display</legend>
  <div class="row"><div><label for="dalarm">Minimum depth (m)</label><input id="dalarm" type="number" step="0.1" min="0" max="100"></div>
  <div><label for="rot">Orientation</label><select id="rot"><option value="0">Landscape</option><option value="2">Landscape, rotated 180&deg;</option></select></div></div>
+ <div class="row"><div><label for="cpa">Collision: CPA below (nm)</label><input id="cpa" type="number" step="0.05" min="0.05" max="5"></div>
+ <div><label for="tcpa">... within (minutes)</label><input id="tcpa" type="number" step="1" min="1" max="120"></div></div>
+ <div class="hint">Collision threshold: a boat that will pass closer than the CPA within the time (or is already closer than the CPA) turns red and starts the alarm and the vibration.</div>
  <div class="hint">Minimum depth: below this depth the depth turns red and the alarm starts (flashing frame on the watch; Boot = snooze 5 minutes).</div>
  <label for="tz">Time zone (POSIX string, automatic daylight saving)</label><input id="tz" maxlength="63" placeholder="CET-1CEST,M3.5.0,M10.5.0/3">
  <div class="hint">Time comes from NTP (if the WiFi has Internet) or from the GPS (NMEA RMC/ZDA). Italy: CET-1CEST,M3.5.0,M10.5.0/3 &middot; UTC: UTC0</div>
@@ -175,7 +178,7 @@ async function status(){try{const s=await api('/api/status');
  +(s.ap?tile('Setup WiFi',s.ap):'');
  $('wtime').textContent=s.time||'not set';$('wsrc').textContent=s.time&&s.tsrc?'('+s.tsrc+')':''}catch(e){}}
 async function load(){cfg=await api('/api/config');
- for(const k of['ssid','host','port','dalarm','name','tz'])$(k).value=cfg[k];
+ for(const k of['ssid','host','port','dalarm','cpa','tcpa','name','tz'])$(k).value=cfg[k];
  $('rot').value=cfg.rot;$('night').checked=cfg.night;$('pass').value='';$('webpass').value='';
  $('pass').placeholder=cfg.pass_set?'(unchanged)':'(none)';$('webpass2').value='';$('fwv').textContent=cfg.fw;
  $('vib').value=cfg.vib;
@@ -185,7 +188,7 @@ async function load(){cfg=await api('/api/config');
 async function save(andRestart){
  if(cfg&&cfg.webpass_default&&!$('webpass').value){msg('Set a new administrator password first (not "admin").',false);return}
  const b={name:$('name').value.trim(),vib:+$('vib').value,ssid:$('ssid').value,host:$('host').value.trim(),
-  port:+$('port').value,dalarm:+$('dalarm').value,tz:$('tz').value.trim(),night:$('night').checked,rot:+$('rot').value};
+  port:+$('port').value,dalarm:+$('dalarm').value,cpa:+$('cpa').value,tcpa:+$('tcpa').value,tz:$('tz').value.trim(),night:$('night').checked,rot:+$('rot').value};
  if($('openn').checked)b.pass='';else if($('pass').value)b.pass=$('pass').value;
  if($('webpass').value){if($('webpass').value!==$('webpass2').value){msg('The two passwords are different',false);return}
   b.webpass=$('webpass').value}

@@ -27,9 +27,8 @@ Double tap anywhere = day / night (red) theme. Long press = menu.
 ## Alarms
 
 A collision warning (or a depth below the minimum depth) shows a flashing red frame, jumps to the AIS (or depth) page and
-wakes the screen. BOOT snoozes it for 5 minutes. **The board has no vibration motor**: to get vibration, wire a small motor
-through a transistor to a free pad (GPIO 1, 2, 3, 17, 18, 21, 43, 44, 47 or 48) and set the pin on the web page ("Vibration motor GPIO", with a
-"Test vibration" button) or `VIB_PIN` in `EssentialViewS3/config.h`. It pulses (300 ms every 1.5 s) while the alarm is active; BOOT stops it.
+wakes the screen. BOOT snoozes it for 5 minutes. The board has a vibration motor on **GPIO18** (the default, per the Waveshare schematic); the pin can be changed on the web page ("Vibration motor GPIO", with a
+"Test vibration" button) or with `VIB_PIN` in `EssentialViewS3/config.h`. It pulses (300 ms every 1.5 s) while the alarm is active; BOOT stops it.
 
 ## Simulator
 

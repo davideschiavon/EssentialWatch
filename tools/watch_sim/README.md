@@ -29,4 +29,6 @@ The second tab talks to the real watch:
 
 1. **Connection** - over the network (watch IP + admin password, Digest login) or over the USB cable (pick the COM port and press Connect; needs `pip install pyserial`).
 2. **Device address** - the Wi-Fi IP of the watch (read over USB too, so you can find it with the cable and then switch to the network), signal, NMEA server, battery. Buttons: copy the address, use it for the network connection, open its web page, and (USB) point the watch at this simulator.
-3. **Screen of the watch** - live mirror (needs Pillow), PNG save, the same buttons as the watch (right, left, double tap, power; snooze and vibration test only over the network), and the USB log with a command line (`CSTATUS`, `CGET`, `S`, `U D O L B K`, `H<ip>:<port>`).
+3. **Screen of the watch** - live mirror (needs Pillow), PNG save, the same buttons as the watch (right, left, double tap, power; snooze only over the network), and the USB log with a command line (`CSTATUS`, `CGET`, `S`, `U D O L B K`, `H<ip>:<port>`).
+
+The Tools tab remembers the watch IP and the admin password (plain text in `~/.essentialwatch_sim.json`).
