@@ -1,17 +1,57 @@
 # EssentialWatch
 
-EssentialView (NMEA 0183 wind / speed / depth display) ported to the
-**Waveshare ESP32-S3-Touch-AMOLED-2.06** (410x502 AMOLED, FT3168 touch).
+A marine instrument watch: NMEA 0183 wind / speed / depth, AIS collision warning, clock and battery,
+on the **Waveshare ESP32-S3-Touch-AMOLED-2.06** (410x502 AMOLED, FT3168 touch).
+Ported from EssentialView (e-ink).
+
+## Pages (swipe left / right)
+
+1. **Clock** - analog dial, date. Time from NTP, GPS (NMEA RMC/ZDA) or the battery-backed RTC.
+2. **Wind** - compass dial (apparent wind = blue triangle, true wind = yellow triangle), AWS / TWS in the centre.
+3. **SOG / Depth** - speed over ground and depth; the depth turns red below the minimum depth.
+4. **AIS** - up to 5 boats in collision course or very close, with the distance next to the name. Red = collision course
+   (CPA < 0.3 nm within 15 min) or closer than 0.3 nm. Names are decoded from AIS messages 5, 19 and 24.
+5. **Battery** - battery level (top) and screen brightness (bottom: touch or drag to set it).
+
+"SEGNALE PERSO" (orange watermark) appears when no NMEA data has arrived for a few seconds.
+Double tap anywhere = day / night (red) theme. Long press = menu.
+
+## Buttons
+
+| Button | Action |
+|---|---|
+| **PWR** (short press) | screen on / off |
+| **PWR** (hold 4 s) | power the watch off (a single click on PWR switches it on again) |
+| **BOOT** | snooze the alarm for 5 minutes |
+
+## Alarms
+
+A collision warning (or a depth below the minimum depth) shows a flashing red frame, jumps to the AIS (or depth) page and
+wakes the screen. BOOT snoozes it for 5 minutes. **The board has no vibration motor**: to get vibration, wire a small motor
+through a transistor to a free GPIO and set `VIB_PIN` in `EssentialViewS3/config.h` (pulses while the alarm is active).
+
+## Web page (port 80)
+
+Default login admin / admin (change it). Without Wi-Fi the board starts the AP "EssentialView Network" at 192.168.4.1.
+Settings: Wi-Fi, NMEA server (TCP), minimum depth, time zone, **date and time**, orientation, name, password.
+The screen is shown live with the buttons Right, Left, Double Tap, Power and Boot.
+
+**Firmware update:** *Search firmware* lists the firmware published as **GitHub Releases** of this repository
+(latest first), shows the changelog of the selected one and installs it. Nothing is read from the `release/` folder.
+Publishing a firmware (always with its changelog in the release notes):
+
+```
+gh release create vX.Y.Z release/EssentialWatch-fw-X.Y.Z-s3.bin --title "EssentialWatch X.Y.Z" --notes-file notes.md
+```
+
+## Build
 
 - Firmware: `EssentialViewS3/` (Arduino, esp32 core 3.3.x, FQBN
   `esp32:esp32:esp32s3:PSRAM=opi,FlashSize=32M,PartitionScheme=app13M_data7M_32MB,FlashMode=qio,USBMode=hwcdc,CDCOnBoot=cdc`)
 - Libraries: `libraries/` (Waveshare fork of GFX Library for Arduino)
-- Ready-to-flash binary: `release/` (also usable from the web page's firmware update)
-- Web configuration page on port 80 (default login admin/admin - change it);
-  without Wi-Fi the board starts the AP "EssentialView Network" at 192.168.4.1.
-- NMEA is received over Wi-Fi (TCP); the board has no RS485.
-
-Build: `arduino-cli compile --fqbn <FQBN above> --libraries libraries EssentialViewS3`
+- `arduino-cli compile --fqbn <FQBN above> --libraries libraries EssentialViewS3`
+- Fonts: `python tools/make_fonts.py`; icons: `python tools/make_icons.py` (Material icons as used in EssentialSail)
+- NMEA is received over Wi-Fi (TCP); the board has no RS485. Screen corner radius: `PANEL_CORNER_R` in `config.h`.
 
 ## License
 
@@ -20,6 +60,7 @@ The original code in this repository is released under the [MIT License](LICENSE
 Third-party components keep their own licenses and are **not** covered by the MIT license above:
 
 - `libraries/GFX_Library_for_Arduino/` - Waveshare fork, see `libraries/LICENSE-waveshare.txt`.
+- `EssentialViewS3/es_icons.h` - icons from Material Icons (Apache License 2.0), the same ones used in EssentialSail.
 - `assets/fonts/DejaVuSans*.ttf` - DejaVu fonts (free license).
 - `assets/fonts/Essentialsail*.ttf` and the generated `EssentialViewS3/es_fonts.h` - Essentialsail fonts, created by and copyright of Davide Schiavon, released under the [SIL Open Font License 1.1](assets/fonts/OFL.txt). The few symbols taken from DejaVu Sans keep the DejaVu license.
 
