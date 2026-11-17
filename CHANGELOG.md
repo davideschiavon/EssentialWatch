@@ -2,6 +2,32 @@
 
 Every version is published as a GitHub Release (firmware .bin + these notes); the watch web page lists them.
 
+## 2.8.0
+
+- **Man overboard (MOB) link to EssentialSail** (Wi-Fi), following the EssentialSail MOB / Watch protocol version 1. Off by default: switch it on in the
+  menu ("MOB messages") or on the web page. It adds a **MOB page** (last page): hold the screen to raise the alarm, hold twice to cancel.
+  - The watch sends signed messages (HMAC-SHA256) over UDP to the tablet and checks the signed acknowledgement: "alive" every 5.5 s, the alarm
+    every second until the tablet answers (then every 5.5 s), "Delivering / Delivered / NOT DELIVERED" on the page. The sequence number survives restarts.
+  - **Owner name** (menu "MOB owner name" or web page) is sent to the tablet before the alarm and every minute.
+  - **Pairing with the 6-digit code** shown by the tablet (menu "MOB pairing code" or web page, field "Pairing code"): the watch finds the tablet by itself
+    (UDP broadcast), the two agree on a secret key (ECDH P-256 + HKDF) that never travels on the air, and the watch stores the tablet address, the device
+    ID and the key. The key is never shown again and is not in the settings backup. You can also type the address, device ID and key by hand, or paste a
+    pairing link (Settings > MOB Messages > Pairing link on the tablet).
+  - **Boat to watch**: the tablet sends the distance and the direction of the boat (shown on the MOB page as an arrow, north up: the watch has no compass,
+    and as metres and degrees; greyed out after 15 s) and, when the crew presses "Ring watch", a **siren**: the vibration motor pulses and the screen wakes
+    (a tap mutes it for 20 s). The watch confirms every message to the tablet. The board has no speaker output used by the firmware: the siren is the motor.
+  - **Search EssentialSail** (web page): scans the Wi-Fi network for the tablet's MOB port; "verified" when the watch is already paired and the tablet answers.
+  - Optional **GPS module** (NMEA 0183, 3.3 V) on a free pad (web page: Device > GPS module RX pad and baud rate): the position of the wearer is shown on the
+    web page (with a map link) and sent in the MOB messages. The board itself has no GPS.
+  - USB test commands: `CMOBVEC`, `CMOIVEC`, `CPAIRVEC` (the reference vectors of the specification), `CPAIR <code>`, `CGPSFEED <nmea>`, `CMOBRAISE`, `CMOBCANCEL`.
+- **Web page**: uses the Essentialsail fonts (served by the watch itself, no Internet needed) and square corners everywhere.
+- **Fixed (2.7.0)**: the web page was empty (a script error) because two French texts had an unescaped apostrophe ("Veille de l'écran" and the screen
+  timeout hint). Everything on the page, in every language, was affected.
+- The clock page has a plain background (no gradient or glows).
+- Simulator: button **Stop other simulators** (ends the other copies of the simulator still running in the background, which can keep the NMEA or the USB port busy).
+- Docs and tools for testing the MOB link together with the EssentialSail side: `docs/MOB_TESTING.md` (test levels, scenario matrix, who touches what, report format),
+  `tools/mob_test/` (`watch_usb.py`, `fake_tablet.py`, `fake_pair_tablet.py`).
+
 ## 2.7.0
 
 - **Elegant Black theme**, inspired by the dark theme of EssentialSail (EssentialAIS): near-black green background, graphite cards,

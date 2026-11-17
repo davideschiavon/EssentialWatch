@@ -12,6 +12,7 @@ Ported from EssentialView (e-ink). Languages: English, French, Spanish (watch me
 4. **AIS** - up to 5 boats in collision course or very close, with the distance next to the name. Red = collision course
    (CPA < 0.3 nm within 15 min) or closer than 0.3 nm. Names are decoded from AIS messages 5, 19 and 24.
 5. **Battery** - battery level (top) and screen brightness (bottom: touch or drag to set it).
+6. **MOB** (only when the MOB link is on) - man overboard: hold the screen to raise the alarm; see "Man overboard" below.
 
 "SEGNALE PERSO" (orange watermark) appears when no NMEA data has arrived for a few seconds.
 Double tap anywhere = day / night (red) theme. Long press = menu.
@@ -29,6 +30,15 @@ Double tap anywhere = day / night (red) theme. Long press = menu.
 A collision warning (or a depth below the minimum depth) shows a flashing red frame, jumps to the AIS (or depth) page and
 wakes the screen. BOOT snoozes it for 5 minutes. The board has a vibration motor on **GPIO18** (the default, per the Waveshare schematic); the pin can be changed on the web page ("Vibration motor GPIO", with a
 "Test vibration" button) or with `VIB_PIN` in `EssentialViewS3/config.h`. It pulses (300 ms every 1.5 s) while the alarm is active; BOOT stops it.
+
+## Man overboard (MOB) link
+
+The watch can raise a man-overboard alarm on the **EssentialSail** tablet over Wi-Fi (EssentialSail MOB / Watch protocol, version 1): signed UDP messages
+with an acknowledgement, the owner name, pairing with the 6-digit code shown by the tablet, and, from the tablet, the distance and direction of the boat
+and a siren request (the vibration motor). It is off by default. Settings are in the watch menu (MOB messages, MOB server IP, MOB owner name, MOB pairing code)
+and on the web page (section "Man overboard (MOB) link to EssentialSail": pairing code, pairing link, address, device ID, key, "Search EssentialSail"). An optional GPS
+module (NMEA 0183) on a free pad gives the position of the wearer. The board has no GPS and no compass: without a GPS module the tablet uses the boat position,
+and the direction to the boat is shown north up. The source files are `mob.h` (messages), `pair.h` (pairing), `gps.h` (GPS).
 
 ## Simulator
 

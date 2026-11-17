@@ -545,6 +545,49 @@ def save_settings(d):
         pass
 
 
+def find_other_sims():
+    """(pid, command) of the other copies of this simulator that are running (also windowless ones started with
+    pythonw or in the background). Not included: this process and the launchers it was started from."""
+    rows = []
+    if os.name == "nt":
+        import subprocess
+        ps = ("Get-CimInstance Win32_Process | Where-Object { $_.Name -match '^(python|pythonw|py)[0-9.]*\\.exe$' } | "
+              "ForEach-Object { \"$($_.ProcessId)|$($_.ParentProcessId)|$($_.CommandLine)\" }")
+        out = subprocess.run(["powershell", "-NoProfile", "-Command", ps], capture_output=True, text=True,
+                             timeout=20, creationflags=0x08000000).stdout   # 0x08000000 = no console window
+    else:
+        import subprocess
+        out = "\n".join(f"{p}|{pp}|{c}" for p, pp, c in
+                        (l.strip().split(None, 2) for l in subprocess.run(["ps", "-eo", "pid=,ppid=,args="], capture_output=True, text=True, timeout=20).stdout.splitlines() if l.strip()))
+    for line in out.splitlines():
+        parts = line.strip().split("|", 2)
+        if len(parts) == 3 and parts[0].isdigit() and parts[1].isdigit() and os.path.basename(__file__) in parts[2]:
+            rows.append((int(parts[0]), int(parts[1]), parts[2]))
+    parent = {p: pp for p, pp, _ in rows}
+    mine, p = set(), os.getpid()
+    while p in parent and p not in mine:   # this process and the launchers above it (for example pythonw -> python)
+        mine.add(p)
+        p = parent[p]
+    return [(p, c) for p, _, c in rows if p not in mine]
+
+
+def kill_pids(pids):
+    """Ends the processes; returns the PIDs that could not be ended."""
+    import subprocess
+    failed = []
+    for pid in pids:
+        try:
+            if os.name == "nt":
+                r = subprocess.run(["taskkill", "/PID", str(pid), "/F"], capture_output=True, timeout=20, creationflags=0x08000000)
+                if r.returncode != 0:
+                    failed.append(pid)
+            else:
+                os.kill(pid, 15)
+        except (OSError, subprocess.SubprocessError):
+            failed.append(pid)
+    return failed
+
+
 def local_ip():
     try:
         s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -593,6 +636,14 @@ TX = {
     "signal_lost_tag": ("   [SIGNAL LOST]", "   [SIGNAL PERDU]", "   [SEÑAL PERDIDA]"),
     # --- log ---
     "log_stopped": ("server stopped", "serveur arrêté", "servidor detenido"),
+    "kill_btn": ("Stop other simulators", "Arrêter les autres simulateurs", "Detener los otros simuladores"),
+    "kill_none": ("No other simulator is running.", "Aucun autre simulateur en cours.", "No hay otros simuladores en marcha."),
+    "kill_ask": ("Other simulators are running in the background (they can hold the NMEA port or the USB port):\n\n{0}\n\nStop them? This window stays open.",
+                 "D'autres simulateurs tournent en arrière-plan (ils peuvent occuper le port NMEA ou le port USB) :\n\n{0}\n\nLes arrêter ? Cette fenêtre reste ouverte.",
+                 "Hay otros simuladores en segundo plano (pueden ocupar el puerto NMEA o el puerto USB):\n\n{0}\n\n¿Detenerlos? Esta ventana sigue abierta."),
+    "kill_done": ("stopped {0} other simulator(s) (PID {1})", "{0} autre(s) simulateur(s) arrêté(s) (PID {1})", "{0} simulador(es) detenido(s) (PID {1})"),
+    "kill_fail": ("could not stop PID {0}", "impossible d'arrêter le PID {0}", "no se pudo detener el PID {0}"),
+    "kill_err": ("cannot list the processes: {0}", "impossible de lister les processus : {0}", "no se pueden listar los procesos: {0}"),
     "log_busy": ("cannot start: port {0} is already used (another simulator still open?)",
                  "démarrage impossible : le port {0} est déjà utilisé (un autre simulateur est-il ouvert ?)",
                  "no se puede iniciar: el puerto {0} ya está en uso (¿otro simulador abierto?)"),
@@ -824,6 +875,34 @@ def run_gui(args):
             log(tr("log_server_on", local_ip(), port_v.get()))
         srv_btn.config(text=tr("stop" if server.running else "start"))
     srv_btn.config(command=toggle_server)
+
+    # button: ends the other copies of this simulator still running in the background (they keep the NMEA / USB port busy)
+    kill_btn = L(ttk.Button(con), "kill_btn")
+    kill_btn.grid(row=4, column=0, columnspan=2, sticky="ew", **pad)
+
+    def kill_others():
+        from tkinter import messagebox
+        kill_btn.config(state="disabled")
+
+        def listed(res, err):
+            kill_btn.config(state="normal")
+            if err:
+                log(tr("kill_err", err))
+                return
+            if not res:
+                log(tr("kill_none"))
+                return
+            txt = "\n".join(f"PID {p}: {c[:90]}" for p, c in res)
+            if not messagebox.askyesno(tr("kill_btn"), tr("kill_ask", txt)):
+                return
+            failed = kill_pids([p for p, _ in res])
+            done = [p for p, _ in res if p not in failed]
+            if done:
+                log(tr("kill_done", len(done), ", ".join(map(str, done))))
+            for p in failed:
+                log(tr("kill_fail", p))
+        bg(find_other_sims, listed)
+    kill_btn.config(command=kill_others)
 
     sc = L(ttk.LabelFrame(left), "scenario")
     sc.pack(fill="x", pady=6)

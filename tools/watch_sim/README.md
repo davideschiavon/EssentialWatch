@@ -33,6 +33,8 @@ The second tab talks to the real watch:
 
 The Tools tab remembers the watch IP and the admin password (plain text in `~/.essentialwatch_sim.json`).
 
+The button **Stop other simulators** (Simulator tab, under the NMEA server box) lists the other copies of this simulator still running in the background, also windowless ones (they can keep the NMEA port or the USB port busy), and ends them after a confirmation. This window is never included.
+
 The NMEA server starts by itself when the window opens (use `--no-autostart` to disable it); the watch reconnects without pressing Start.
 
 ## Languages

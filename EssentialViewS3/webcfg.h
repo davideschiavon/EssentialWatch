@@ -13,6 +13,7 @@
 #include <fcntl.h>
 #include <DNSServer.h>
 #include "webpage.h"
+#include "web_fonts.h"   // Essentialsail fonts served to the page
 
 WebServer web(80);
 DNSServer dns;  // configuration network: every name leads to the page (the phone opens it by itself)
@@ -42,6 +43,15 @@ String cfgJson() {
   d["webuser"] = WEB_USER;
   d["vib"] = cfg.vibPin;
   d["webpass_default"] = cfg.webpass == WEB_DEFAULT_PASS;
+  d["mobon"] = cfg.mobOn;
+  d["mobhost"] = cfg.mobHost;
+  d["mobport"] = cfg.mobPort;
+  d["mobid"] = cfg.mobId;
+  d["mobkey_set"] = cfg.mobKey.length() == 64;   // the key never leaves the device
+  d["pair"] = pairStateStr();   // pairing with a code: idle / busy / ok / fail
+  d["mobowner"] = cfg.mobOwner;
+  d["gpsrx"] = cfg.gpsRx;
+  d["gpsbaud"] = cfg.gpsBaud;
   d["fw"] = FW_VERSION;
   String s;
   serializeJson(d, s);
@@ -68,6 +78,12 @@ String backupJson() {
   d["raise"] = cfg.raise;
   d["rot"] = cfg.rot;
   d["tz"] = cfg.tz;
+  d["mobon"] = cfg.mobOn;   // the MOB pairing (id, key) is not part of the backup: it is a secret, pair again after a restore
+  d["mobhost"] = cfg.mobHost;
+  d["mobport"] = cfg.mobPort;
+  d["mobowner"] = cfg.mobOwner;
+  d["gpsrx"] = cfg.gpsRx;
+  d["gpsbaud"] = cfg.gpsBaud;
   String s;
   serializeJson(d, s);
   return s;
@@ -87,6 +103,21 @@ String statusJson() {
   d["host"] = cfg.host;
   d["port"] = cfg.port;
   d["server"] = srvUp;
+  d["mob"] = cfg.mobOn ? (mob.st == MOB_IDLE ? "idle" : (mob.st == MOB_ALARM ? "alarm" : "cancelling")) : "off";
+  d["mobok"] = mob.okNow == 1;   // configured, Wi-Fi up
+  d["mobsent"] = mob.nSent; d["mobacks"] = mob.nAck; d["mobseq"] = mob.seq;
+  d["mobackage"] = mob.nAck ? (int)((millis() - mob.lastAckMs) / 1000) : -1;
+  if (moi.have) {   // boat -> watch: last $MOI from the tablet
+    d["moi"] = (int)((millis() - moi.rxMs) / 1000);   // its age in seconds
+    d["moidist"] = moi.m.dist; d["moibrg"] = moi.m.brg; d["moisiren"] = moi.m.siren;
+  }
+  d["moisirenon"] = mobSirenOn(); d["moiacc"] = moi.nAcc; d["moidrop"] = moi.nDrop;
+  d["gps"] = gps.on;   // optional GPS module of the watch
+  if (gps.on) {
+    d["gpsfix"] = gpsAge() >= 0;
+    if (gpsAge() >= 0) { d["gpslat"] = serialized(String(gps.lat, 5)); d["gpslon"] = serialized(String(gps.lon, 5)); d["gpsage"] = gpsAge(); }
+    d["gpssats"] = gps.sats; d["gpslines"] = gps.lines; d["gpsbad"] = gps.bad;
+  }
   d["rx"] = nRx; d["ok"] = nOk; d["badcs"] = nBadCs; d["other"] = nUnknown;
   auto put = [&](const char *k, const Val &v, int dec) { if (v.ok()) d[k] = serialized(String(v.v, dec)); };
   put("awa", awa, 0); put("aws", aws, 1); put("sog", sog, 1); put("stw", stw, 1);
@@ -216,6 +247,42 @@ String applyCfg(const String &body, bool &needRestart, bool fromWeb = false) {
     if (!z.length() || z.length() > 63) return "time zone: 1-63 characters (POSIX TZ string)";
     n.tz = z;
   }
+  if (!d["mobon"].isNull()) n.mobOn = d["mobon"].as<bool>();
+  if (d["mobhost"].is<const char *>()) {
+    String h = d["mobhost"].as<String>();
+    h.trim();
+    if (h.length() > 63) return "MOB address: up to 63 characters";
+    for (char c : h) if (!isalnum((unsigned char)c) && c != '.' && c != '-') return "MOB address: IP address or host name";
+    n.mobHost = h;
+  }
+  if (!d["mobport"].isNull()) {
+    long p = d["mobport"].as<long>();
+    if (p < 1 || p > 65535) return "MOB port: 1-65535";
+    n.mobPort = p;
+  }
+  if (d["mobid"].is<const char *>()) {
+    String v = d["mobid"].as<String>();
+    v.trim();
+    v.toUpperCase();
+    if (v.length() && !mobIdOk(v)) return "MOB device ID: 4-8 characters, A-Z and 0-9";
+    n.mobId = v;
+  }
+  if (d["mobkey"].is<const char *>()) {   // present = new key (empty = remove it)
+    String v = d["mobkey"].as<String>();
+    v.trim();
+    v.toLowerCase();
+    uint8_t kb[32];
+    if (v.length() && !mobHexKey(v, kb)) return "MOB key: exactly 64 hexadecimal characters";
+    n.mobKey = v;
+  }
+  if (d["mobowner"].is<const char *>()) {
+    String v = d["mobowner"].as<String>();
+    v.trim();
+    size_t chars = 0;
+    for (size_t i = 0; i < v.length(); i++) if (((uint8_t)v[i] & 0xC0) != 0x80) chars++;   // UTF-8 characters
+    if (chars > 24) return "MOB owner name: up to 24 characters";
+    n.mobOwner = v;
+  }
   if (d["webpass"].is<const char *>()) {
     String w = d["webpass"].as<String>();
     if (w.length() < 4 || w.length() > 32) return "web password: 4-32 characters";
@@ -233,6 +300,22 @@ String applyCfg(const String &body, bool &needRestart, bool fromWeb = false) {
     vibNew = v;
   }
 
+  if (!d["gpsrx"].isNull()) {   // optional GPS module: only the free pads of the board, never the vibration motor pin
+    int v = d["gpsrx"].as<int>();
+    static const int8_t okGps[] = {1, 2, 3, 17, 21, 43, 44, 47, 48};
+    bool good = v == -1;
+    for (int8_t o : okGps) if (o == v) good = true;
+    if (!good) return "GPS pin: -1 (none) or one of GPIO 1 2 3 17 21 43 44 47 48";
+    if (v >= 0 && v == vibNew) return "GPS pin: already used by the vibration motor";
+    n.gpsRx = v;
+  }
+  if (!d["gpsbaud"].isNull()) {
+    uint32_t b = d["gpsbaud"].as<uint32_t>();
+    if (b != 4800 && b != 9600 && b != 19200 && b != 38400 && b != 57600 && b != 115200) return "GPS baud rate: 4800, 9600, 19200, 38400, 57600 or 115200";
+    n.gpsBaud = b;
+  }
+  if (n.gpsRx >= 0 && n.gpsRx == vibNew) return "GPS pin: already used by the vibration motor";
+
   long long newEpoch = 0;
   if (!d["epoch"].isNull()) {
     newEpoch = d["epoch"].as<long long>();
@@ -241,7 +324,11 @@ String applyCfg(const String &body, bool &needRestart, bool fromWeb = false) {
   needRestart = n.ssid != cfg.ssid || n.pass != cfg.pass || n.name != cfg.name;
   bool srvChanged = n.host != cfg.host || n.port != cfg.port;
   bool look = n.theme != cfg.theme || n.rot != cfg.rot;
+  bool mobChanged = n.mobOwner != cfg.mobOwner || n.mobId != cfg.mobId || n.mobKey != cfg.mobKey || n.mobHost != cfg.mobHost;
+  bool gpsChanged = n.gpsRx != cfg.gpsRx || n.gpsBaud != cfg.gpsBaud;
   cfg = n;
+  if (gpsChanged) gpsBegin();
+  if (mobChanged) mob.lastNameMs = 0;   // the tablet gets the (new) owner name at once
   if (vibNew != cfg.vibPin) vibSetPin(vibNew);   // releases the old pin, drives the new one low
   saveCfg();
   applyTz();
@@ -287,6 +374,54 @@ void configCmd(const String &c) {
   else if (c == "STATUS") Serial.println("STATUS " + statusJson());
   else if (c == "SCAN") Serial.println("SCAN " + scanJson());
   else if (c == "BACKUP") Serial.println("BACKUP " + backupJson());
+  else if (c == "MOBVEC") {   // test: the lines of the specification's vectors 5, 9 and 10 (key 00..1f, id W7K2)
+    uint8_t k[32];
+    for (int i = 0; i < 32; i++) k[i] = i;
+    Serial.print("MOBVEC " + mobBuildLine(k, "W7K2", 422, 'A', 84, ""));
+    Serial.print("MOBVEC " + mobBuildLine(k, "W7K2", 426, 'N', 85, "Anna Rossi"));
+    Serial.print("MOBVEC " + mobBuildLine(k, "W7K2", 427, 'N', 84, "José"));
+  }
+  else if (c == "MOIVEC") {   // test: the boat -> watch lines of the specification (13.3), key 00..1f, id W7K2
+    uint8_t k[32];
+    for (int i = 0; i < 32; i++) k[i] = i;
+    const char *lines[] = {"$MOI,1,W7K2,0007,142,287,0,3,45.12345,9.12345,150c82fd*0A", "$MOI,1,W7K2,0008,138,285,1,2,45.12345,9.12345,465212ca*51",
+                           "$MOI,1,W7K2,0009,,,1,,,,42af3bc1*59", "$MOI,1,W7K2,0009,,,1,,,,42af3bc2*5A", "$MOI,1,ZZZZ,0009,,,1,,,,42af3bc1*59"};
+    for (const char *l : lines) {
+      MoiMsg m;
+      bool ok = mobParseMoi(k, "W7K2", String(l), m);
+      Serial.printf("MOIVEC %s seq=%u dist=%d brg=%d siren=%d age=%d boat=%.5f,%.5f  %s\n", ok ? "ACCEPT" : "REJECT", ok ? m.seq : 0, ok ? m.dist : 0, ok ? m.brg : 0,
+                    ok ? m.siren : 0, ok ? m.age : 0, ok ? m.blat : 0.0, ok ? m.blon : 0.0, l);
+    }
+    Serial.print("MOIVEC MOK for 0008: " + mobBuildMok(k, "W7K2", 8));
+  }
+  else if (c.startsWith("GPSFEED ")) {   // test: feeds one NMEA sentence to the GPS parser
+    bool ok = gpsFeed(c.substring(8));
+    Serial.printf("GPSFEED %s fix=%d lat=%.5f lon=%.5f sats=%d\n", ok ? "POSITION" : "no position", (int)gps.fix, gps.lat, gps.lon, gps.sats);
+  }
+  else if (c.startsWith("PAIR ")) {   // test / USB: start pairing with the code shown on the tablet
+    String e = pairStart(c.substring(5));
+    Serial.println(e.length() ? "CFG_ERR " + errJson(e) : "CFG_OK " + okJson(false));
+  }
+  else if (c == "PAIRVEC") {   // test: the reference example of the specification (8.5): fixed keys, code 482913, id W7K2
+    pairFree();
+    String w;
+    bool k = pairKeygen("1111111111111111111111111111111111111111111111111111111111111111", w);
+    Serial.println(String("PAIRVEC wpub ") + (k ? w : String("ERROR")));
+    String req = pairRequest("482913", w);
+    Serial.println("PAIRVEC " + req);
+    const String moq = "$MOQ,1,W7K2,04d65a93977caa3d1b081852ff57a79e465f1660577304baead505dd3a48589cf350185e895372df6221ea3a137557e473fddb6755f05bd507c3c533fce9c91285,c079233dcfe766ca*23";
+    String id;
+    uint8_t key[32];
+    bool ok = pairComplete(moq, "482913", w, id, key);
+    Serial.println(String("PAIRVEC reply ") + (ok ? "ACCEPT id " + id + " key " + pairHex(key, 32) : String("REJECT")));
+    String bad = moq;
+    bad.setCharAt(bad.length() - 4, '0');   // damaged mac (and checksum): must be rejected
+    Serial.println(String("PAIRVEC damaged reply ") + (pairComplete(bad, "482913", w, id, key) ? "ACCEPT (WRONG)" : "REJECT"));
+    Serial.println(String("PAIRVEC wrong code ") + (pairComplete(moq, "482914", w, id, key) ? "ACCEPT (WRONG)" : "REJECT"));
+    pairFree();
+  }
+  else if (c == "MOBRAISE") { mobRaise(); page = PAGE_MOB; dirty = true; Serial.println("CFG_OK " + okJson(false)); }   // test, no confirmation
+  else if (c == "MOBCANCEL") { mobCancel(); dirty = true; Serial.println("CFG_OK " + okJson(false)); }
   else if (c == "FACTORY") { Serial.println("CFG_OK " + okJson(true)); Serial.flush(); factoryReset(); }
   else if (c == "RESTART") { Serial.println("CFG_OK " + okJson(false)); Serial.flush(); delay(200); ESP.restart(); }
   else if (c.startsWith("SET ")) {
@@ -562,9 +697,15 @@ static volatile int scanNHits = 0, scanProgress = 0;
 static volatile bool scanRunning = false;
 static uint8_t scanBase[3] = {0, 0, 0};
 static const uint16_t SCAN_PORTS[] = {10110, 10111, 10112, 2000, 4242, 3000};   // common NMEA / gateway ports
+// The same scan also finds the EssentialSail tablet: mode 1 looks for the MOB listener (one TCP port, 10120 by default).
+// A hit is "verified" when the watch is already paired and the tablet answers a signed "alive" message with a valid $MOA.
+static volatile uint8_t scanMode = 0;       // 0 NMEA server, 1 EssentialSail (MOB listener)
+static uint16_t scanMobPort = 10120;
 
 static void nmeaScanTask(void *) {
-  const int nPorts = sizeof(SCAN_PORTS) / sizeof(SCAN_PORTS[0]);
+  const bool mobScan = scanMode == 1;
+  const uint16_t *ports = mobScan ? &scanMobPort : SCAN_PORTS;
+  const int nPorts = mobScan ? 1 : sizeof(SCAN_PORTS) / sizeof(SCAN_PORTS[0]);
   const int total = 254 * nPorts, SLOTS = 5;
   const uint8_t myHost = WiFi.localIP()[3];
   struct Slot { int fd; uint32_t t0; uint8_t host; uint16_t port; } slot[SLOTS];
@@ -576,7 +717,7 @@ static void nmeaScanTask(void *) {
     for (auto &s : slot) {   // refill the free slots
       while (s.fd < 0 && issued < total) {
         uint8_t host = 1 + issued / nPorts;
-        uint16_t port = SCAN_PORTS[issued % nPorts];
+        uint16_t port = ports[issued % nPorts];
         if (host == myHost) { issued++; done++; continue; }
         int fd = socket(AF_INET, SOCK_STREAM, 0);
         if (fd < 0) break;   // out of sockets: try again on the next round
@@ -620,7 +761,25 @@ static void nmeaScanTask(void *) {
     WiFiClient c;
     IPAddress ip(scanBase[0], scanBase[1], scanBase[2], opens[i].host);
     NmeaHit h = {opens[i].host, opens[i].port, false, ""};
-    if (c.connect(ip, opens[i].port, 800)) {
+    uint8_t mkey[32];
+    if (mobScan) {   // verification: a signed "alive" message (state P) must come back as a valid $MOA on the same connection
+      if (mobIdOk(cfg.mobId) && mobHexKey(cfg.mobKey, mkey) && c.connect(ip, opens[i].port, 800)) {
+        uint16_t sq = mobNextSeq();
+        String ln = mobBuildLine(mkey, cfg.mobId, sq, 'P', mobBattNow(), "");
+        c.print(ln);
+        uint32_t t = millis();
+        String line;
+        while (millis() - t < 1500 && c.connected() && !h.nmea) {
+          while (c.available() && !h.nmea) {
+            char ch = (char)c.read();
+            if (ch == '\n') { if (mobCheckAck(mkey, cfg.mobId, line) == (int)sq) h.nmea = true; line = ""; }
+            else if (ch != '\r' && line.length() < 100) line += ch;
+          }
+          vTaskDelay(10);
+        }
+        c.stop();
+      }
+    } else if (c.connect(ip, opens[i].port, 800)) {
       uint32_t t = millis();
       String line;
       while (millis() - t < 2000 && c.connected() && !h.nmea) {
@@ -645,8 +804,10 @@ static void nmeaScanTask(void *) {
   vTaskDelete(nullptr);
 }
 
-String nmeaScanStart() {
+String nmeaScanStart(uint8_t mode = 0) {
   if (scanRunning) return "";
+  scanMode = mode;
+  scanMobPort = cfg.mobPort ? cfg.mobPort : 10120;
   if (WiFi.status() != WL_CONNECTED) return "the watch is not connected to a WiFi network";
   IPAddress me = WiFi.localIP();
   scanBase[0] = me[0]; scanBase[1] = me[1]; scanBase[2] = me[2];
@@ -673,6 +834,14 @@ String nmeaScanJson() {
 }
 
 void webSetup() {
+  web.on("/fonts/EssentialsailDisplay-Bold.ttf", HTTP_GET, [] {   // no login: they are public (OFL) font files
+    web.sendHeader("Cache-Control", "public, max-age=604800");
+    web.send_P(200, "font/ttf", (PGM_P)FONT_DISPLAY, FONT_DISPLAY_LEN);
+  });
+  web.on("/fonts/EssentialsailText-Regular.ttf", HTTP_GET, [] {
+    web.sendHeader("Cache-Control", "public, max-age=604800");
+    web.send_P(200, "font/ttf", (PGM_P)FONT_TEXT, FONT_TEXT_LEN);
+  });
   web.on("/", HTTP_GET, [] {
     if (!webAuth(true)) return;
     web.send_P(200, "text/html; charset=utf-8", WEB_PAGE);
@@ -731,6 +900,28 @@ void webSetup() {
     sendJson(e.length() ? errJson(e) : okJson(false), e.length() ? 400 : 200);
   });
   web.on("/api/nmeascan", HTTP_GET, [] { if (webAuth()) sendJson(nmeaScanJson()); });
+  web.on("/api/mobscan", HTTP_POST, [] {   // "Search EssentialSail": the same scan, looking for the MOB listener of the tablet
+    if (!webAuth()) return;
+    String e = nmeaScanStart(1);
+    sendJson(e.length() ? errJson(e) : okJson(false), e.length() ? 400 : 200);
+  });
+  web.on("/api/mobpair", HTTP_POST, [] {   // pairing with the 6-digit code shown on the tablet
+    if (!webAuth()) return;
+    JsonDocument pd;
+    deserializeJson(pd, web.arg("plain"));
+    String e = pairStart(pd["code"].as<String>());
+    sendJson(e.length() ? errJson(e) : okJson(false), e.length() ? 400 : 200);
+  });
+  web.on("/api/mobpair", HTTP_GET, [] {
+    if (!webAuth()) return;
+    JsonDocument pd;
+    pd["state"] = pairStateStr();
+    if (pr.st == PAIR_OK) { pd["id"] = cfg.mobId; pd["host"] = cfg.mobHost; pd["port"] = cfg.mobPort; }
+    String out;
+    serializeJson(pd, out);
+    sendJson(out);
+  });
+  web.on("/api/mobscan", HTTP_GET, [] { if (webAuth()) sendJson(nmeaScanJson()); });
   web.on("/api/fwurl", HTTP_POST, [] {
     if (!webAuth()) return;
     JsonDocument d;

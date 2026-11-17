@@ -5,7 +5,7 @@
 //  (ESP32-S3, 2.06" 410x502 QSPI CO5300 AMOLED, FT3168 touch, AXP2101 PMU)
 // ---------------------------------------------------------------
 
-#define FW_VERSION "2.7.0-s3"
+#define FW_VERSION "2.8.0-s3"
 
 // Logical resolution of the interface (same as the panel, portrait)
 #define SCR_W 410
@@ -71,9 +71,10 @@
 #define DOUBLE_TAP_PX    50    // ... and within this distance
 #define TAP_SLOP_PX      14    // beyond this distance it is no longer a still tap
 
-#define NUM_PAGES 5
+#define NUM_PAGES 5      // fixed pages; with MOB messages on there is one more (numPages())
 #define PAGE_AIS  3
 #define PAGE_BATT 4
+#define PAGE_MOB  5      // man overboard page (only when MOB messages are on)
 
 // Physical buttons: BOOT = GPIO0 (low = pressed), PWR = GPIO10 "SYS_OUT" (high = pressed, according to Waveshare)
 #define BOOT_PIN 0

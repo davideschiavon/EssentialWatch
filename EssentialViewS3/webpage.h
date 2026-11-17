@@ -8,60 +8,60 @@ const char WEB_PAGE[] PROGMEM = R"rawliteral(<!doctype html>
 <html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>EssentialWatch</title>
-<link rel="stylesheet" media="print" onload="this.media='all'"
- href="https://fonts.googleapis.com/css2?family=Baloo+2:wght@600;700;800&family=Nunito+Sans:wght@400;600;700&display=swap">
 <style>
+@font-face{font-family:"Essentialsail Display";src:url("/fonts/EssentialsailDisplay-Bold.ttf") format("truetype");font-weight:700;font-style:normal;font-display:swap}
+@font-face{font-family:"Essentialsail Text";src:url("/fonts/EssentialsailText-Regular.ttf") format("truetype");font-weight:400;font-style:normal;font-display:swap}
 :root{--bg:#F2FAFE;--fg:#06233D;--card:#fff;--primary:#0087F3;--accent:#1AD1D1;--muted:#DFF2FD;
 --mfg:#4E6D83;--border:#C5DBE9;--navy:#001B3A;--navyfg:#F2FAFE;--ok:#0a8f4d;--bad:#d63a3a}
 @media (prefers-color-scheme:dark){:root{--bg:#030B1A;--fg:#E9F1F8;--card:#0B1A2E;--muted:#13233A;
 --mfg:#8DA4BA;--border:#22344C;--primary:#2A95F5;--accent:#2BC4C4}}
 *{box-sizing:border-box}
-body{margin:0;background:var(--bg);color:var(--fg);font:16px/1.45 "Nunito Sans",system-ui,-apple-system,"Segoe UI",sans-serif}
-h1,h2{font-family:"Baloo 2","Nunito Sans",system-ui,sans-serif;margin:0;line-height:1.15}
+body{margin:0;background:var(--bg);color:var(--fg);font:16px/1.45 "Essentialsail Text",system-ui,-apple-system,"Segoe UI",sans-serif;font-weight:400}
+h1,h2{font-family:"Essentialsail Display","Essentialsail Text",system-ui,sans-serif;font-weight:700;margin:0;line-height:1.15}
 header{background:var(--navy);color:var(--navyfg);position:relative}
 header::after{content:"";position:absolute;left:0;right:0;bottom:0;height:4px;
 background:linear-gradient(90deg,var(--primary),var(--accent),var(--primary))}
 .top{max-width:1040px;margin:0 auto;padding:18px 16px 22px;display:flex;gap:12px;align-items:center;justify-content:space-between;flex-wrap:wrap}
 .brand{display:flex;gap:12px;align-items:center}
-.logo{width:42px;height:42px;border-radius:12px;background:linear-gradient(135deg,var(--primary),var(--accent));display:grid;place-items:center}
+.logo{width:42px;height:42px;border-radius:0;background:linear-gradient(135deg,var(--primary),var(--accent));display:grid;place-items:center}
 h1{font-size:28px;font-weight:800}
-.sub{color:var(--accent);font-weight:700;font-size:14px;letter-spacing:.04em;text-transform:uppercase}
-.pill{border:1px solid rgba(242,250,254,.25);border-radius:999px;padding:4px 12px;font-size:14px}
+.sub{color:var(--accent);font-family:"Essentialsail Display",system-ui,sans-serif;font-weight:700;font-size:14px;letter-spacing:.04em;text-transform:uppercase}
+.pill{border:1px solid rgba(242,250,254,.25);border-radius:0;padding:4px 12px;font-size:14px}
 .tr{display:flex;gap:8px;align-items:center}
 #langsel{width:auto;padding:4px 8px;background:transparent;color:var(--navyfg);border-color:rgba(242,250,254,.35)}
 #langsel option{color:#06233D}
 main{max-width:1040px;margin:0 auto;padding:16px;display:grid;gap:16px;grid-template-columns:1fr}
 @media(min-width:900px){main{grid-template-columns:1.15fr 1fr;align-items:start}.wide{grid-column:1/-1}}
 .col{display:grid;gap:16px;align-content:start}
-.card{background:var(--card);border:1px solid var(--border);border-radius:14px;padding:16px;box-shadow:0 8px 30px -12px rgba(0,60,120,.22)}
+.card{background:var(--card);border:1px solid var(--border);border-radius:0;padding:16px;box-shadow:0 8px 30px -12px rgba(0,60,120,.22)}
 h2{font-size:21px;font-weight:700;margin-bottom:10px}
 .tiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:8px}
-.tile{background:var(--muted);border-radius:10px;padding:8px 10px}
-.tile b{display:block;font-size:18px;font-family:"Baloo 2",system-ui,sans-serif;overflow-wrap:anywhere}
+.tile{background:var(--muted);border-radius:0;padding:8px 10px}
+.tile b{display:block;font-size:18px;font-family:"Essentialsail Display",system-ui,sans-serif;overflow-wrap:anywhere}
 .tile span{font-size:13px;color:var(--mfg);font-weight:600}
-.dot{display:inline-block;width:10px;height:10px;border-radius:50%;margin-right:6px;background:var(--bad)}
+.dot{display:inline-block;width:10px;height:10px;border-radius:0;margin-right:6px;background:var(--bad)}
 .dot.on{background:var(--ok)}
-label{display:block;font-weight:700;font-size:14px;margin:10px 0 4px}
-input,select{width:100%;font:inherit;color:var(--fg);background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:9px 10px}
+label{display:block;font-family:"Essentialsail Display",system-ui,sans-serif;font-weight:700;font-size:14px;margin:10px 0 4px}
+input,select{width:100%;font:inherit;color:var(--fg);background:var(--bg);border:1px solid var(--border);border-radius:0;padding:9px 10px}
 input:focus,select:focus{outline:2px solid var(--primary);outline-offset:1px}
 .row{display:flex;gap:8px;align-items:center}.row>*{flex:1}
 .check{display:flex;gap:8px;align-items:center;font-weight:600;font-size:14px;margin-top:6px}
 .check input{width:auto}
-fieldset{border:1px solid var(--border);border-radius:12px;padding:4px 12px 12px;margin:0 0 12px}
-legend{font-family:"Baloo 2",system-ui,sans-serif;font-weight:700;color:var(--primary);padding:0 6px}
-.btn{font:inherit;font-weight:800;border-radius:8px;padding:10px 16px;border:1px solid var(--primary);background:var(--primary);color:#fff;cursor:pointer}
+fieldset{border:1px solid var(--border);border-radius:0;padding:4px 12px 12px;margin:0 0 12px}
+legend{font-family:"Essentialsail Display",system-ui,sans-serif;font-weight:700;color:var(--primary);padding:0 6px}
+.btn{font:inherit;font-family:"Essentialsail Display",system-ui,sans-serif;font-weight:700;border-radius:0;padding:10px 16px;border:1px solid var(--primary);background:var(--primary);color:#fff;cursor:pointer}
 .btn.alt{background:transparent;color:var(--primary)}
 .btn.small{padding:6px 10px;flex:0 0 auto}
 .btn:disabled{opacity:.5}
 .actions{display:flex;gap:8px;flex-wrap:wrap;margin-top:8px}
 #msg{margin-top:10px;font-weight:700;min-height:1.4em}
 #msg.ok{color:var(--ok)}#msg.bad{color:var(--bad)}
-.screen{width:100%;height:auto;border-radius:8px;border:1px solid var(--border);background:#fff;image-rendering:auto}
+.screen{width:100%;height:auto;border-radius:0;border:1px solid var(--border);background:#fff;image-rendering:auto}
 .keys{display:grid;grid-template-columns:repeat(3,1fr);gap:6px;margin-top:10px}
-#fwlog{white-space:pre-wrap;background:var(--muted);border-radius:10px;padding:10px 12px;margin:8px 0 0;max-height:220px;overflow:auto;font-size:14px}
+#fwlog{white-space:pre-wrap;background:var(--muted);border-radius:0;padding:10px 12px;margin:8px 0 0;max-height:220px;overflow:auto;font-size:14px}
 .keys .btn{padding:10px 0}
 .hint{font-size:13px;color:var(--mfg)}
-.bar{height:10px;border-radius:5px;background:var(--muted);margin-top:10px;overflow:hidden}
+.bar{height:10px;border-radius:0;background:var(--muted);margin-top:10px;overflow:hidden}
 .bar div{height:100%;width:0;background:linear-gradient(90deg,var(--primary),var(--accent))}
 .warn{color:var(--bad);font-weight:700}
 .btn.danger{background:var(--bad);border-color:var(--bad)}
@@ -92,6 +92,23 @@ legend{font-family:"Baloo 2",system-ui,sans-serif;font-weight:700;color:var(--pr
  <select id="nmealist" hidden></select>
  <div class="hint" id="nmeamsg" data-t="nmeahint"></div>
 </fieldset>
+<fieldset><legend data-t="mobleg"></legend>
+ <div class="check"><input type="checkbox" id="mobon"><span data-t="mobon"></span></div>
+ <label for="mobcode" data-t="mobcode"></label>
+ <div class="row"><input id="mobcode" inputmode="numeric" maxlength="7" placeholder="482 913" autocomplete="off"><button class="btn small" type="button" id="mobpair" data-t="mobpair"></button></div>
+ <div class="hint" id="mobpairmsg"></div>
+ <label for="moblink" data-t="moblink"></label><input id="moblink" placeholder="essentialsail-watch://pair?v=1&amp;id=...&amp;key=...&amp;host=...&amp;port=10120" autocomplete="off">
+ <div class="row"><div><label for="mobhost" data-t="mobhost"></label><input id="mobhost" placeholder="192.168.1.50" maxlength="63"></div>
+ <div style="flex:.5"><label for="mobport" data-t="port"></label><input id="mobport" type="number" min="1" max="65535"></div></div>
+ <div class="row"><div style="flex:.5"><label for="mobid" data-t="mobid"></label><input id="mobid" maxlength="8" placeholder="W7K2" autocomplete="off"></div>
+ <div><label for="mobkey" data-t="mobkey"></label><input id="mobkey" type="password" maxlength="64" autocomplete="new-password" data-tp="unchanged"></div></div>
+ <div class="actions"><button class="btn alt small" type="button" id="mobscan" data-t="mobscan"></button></div>
+ <select id="moblist" hidden></select>
+ <div class="hint" id="mobscanmsg"></div>
+ <label for="mobowner" data-t="mobowner"></label><input id="mobowner" maxlength="24">
+ <div class="hint" data-t="mobhint"></div>
+ <div class="hint" id="mobstat"></div>
+</fieldset>
 <fieldset><legend data-t="display"></legend>
  <label for="lang" data-t="lang"></label>
  <select id="lang"><option value="en">English</option><option value="fr">Français</option><option value="es">Español</option></select>
@@ -120,6 +137,9 @@ legend{font-family:"Baloo 2",system-ui,sans-serif;font-weight:700;color:var(--pr
  <div class="row"><div><input id="vib" type="number" min="-1" max="48" step="1"></div>
  <div><button class="btn alt" type="button" id="vibtest" data-t="vibtest"></button></div></div>
  <div class="hint" data-t="vibhint"></div>
+ <div class="row"><div><label for="gpsrx" data-t="gpsrx"></label><input id="gpsrx" type="number" min="-1" max="48" step="1"></div>
+ <div><label for="gpsbaud" data-t="gpsbaud"></label><select id="gpsbaud"><option>4800</option><option>9600</option><option>19200</option><option>38400</option><option>57600</option><option>115200</option></select></div></div>
+ <div class="hint" data-t="gpshint"></div>
 </fieldset>
 <fieldset><legend data-t="admin"></legend>
  <div class="hint"><span data-t="user"></span> <b>admin</b>. <span id="pwdef"></span> <span data-t="digest"></span></div>
@@ -189,6 +209,39 @@ nmeascan:['Search NMEA server','Chercher le serveur NMEA','Buscar servidor NMEA'
 nmeahint:['Searches this WiFi network for NMEA servers (ports 10110, 10111, 10112, 2000, 4242, 3000). Common ports: 10110, 2000, 4242 (see your gateway).',
  'Cherche des serveurs NMEA sur ce réseau WiFi (ports 10110, 10111, 10112, 2000, 4242, 3000). Ports courants : 10110, 2000, 4242 (voir votre passerelle).',
  'Busca servidores NMEA en esta red WiFi (puertos 10110, 10111, 10112, 2000, 4242, 3000). Puertos habituales: 10110, 2000, 4242 (vea su pasarela).'],
+mobleg:['Man overboard (MOB) link to EssentialSail','Liaison homme à la mer (MOB) vers EssentialSail','Enlace hombre al agua (MOB) con EssentialSail'],
+mobon:['Send MOB messages (adds a MOB page to the watch)','Envoyer les messages MOB (ajoute une page MOB à la montre)','Enviar mensajes MOB (añade una página MOB al reloj)'],
+moblink:['Pairing link (paste it from the tablet: fills the fields below)',"Lien d'appairage (collez-le depuis la tablette : remplit les champs ci-dessous)",'Enlace de emparejamiento (péguelo desde la tableta: rellena los campos de abajo)'],
+mobhost:['EssentialSail tablet address (or Meshtastic gateway)','Adresse de la tablette EssentialSail (ou passerelle Meshtastic)','Dirección de la tableta EssentialSail (o pasarela Meshtastic)'],
+mobid:['Device ID','ID appareil','ID del dispositivo'],
+mobkey:['Key (64 hex characters)','Clé (64 caractères hexadécimaux)','Clave (64 caracteres hexadecimales)'],
+mobowner:['Owner name (sent to the tablet on a MOB)',"Nom du porteur (envoyé à la tablette lors d'un MOB)",'Nombre del dueño (se envía a la tableta en un MOB)'],
+mobhint:['On the tablet: Settings, MOB Messages, switch it on, Pair a watch, copy the link and paste it above. Messages go over WiFi (UDP, port 10120) and the tablet answers each one. The watch has no GPS: the alarm uses the boat position. On the watch, hold the MOB page to raise the alarm. Meshtastic: only through a gateway, enter its address.',
+ "Sur la tablette : Réglages, Messages MOB, activez, Appairer une montre, copiez le lien et collez-le ci-dessus. Les messages passent par WiFi (UDP, port 10120) et la tablette répond à chacun. La montre n'a pas de GPS : l'alarme utilise la position du bateau. Sur la montre, maintenez la page MOB pour déclencher l'alarme. Meshtastic : seulement via une passerelle, saisissez son adresse.",
+ 'En la tableta: Ajustes, Mensajes MOB, actívelo, Emparejar un reloj, copie el enlace y péguelo arriba. Los mensajes van por WiFi (UDP, puerto 10120) y la tableta responde a cada uno. El reloj no tiene GPS: la alarma usa la posición del barco. En el reloj, mantenga pulsada la página MOB para activar la alarma. Meshtastic: solo mediante una pasarela, escriba su dirección.'],
+gpsrx:['GPS module: RX pad (GPIO, -1 = none)','Module GPS : pad RX (GPIO, -1 = aucun)','Módulo GPS: pad RX (GPIO, -1 = ninguno)'],
+gpsbaud:['GPS baud rate','Débit GPS (bauds)','Velocidad GPS (baudios)'],
+gpshint:["The board has no GPS. If you wire a GPS module (NMEA 0183, 3.3 V) to a free pad, set the pad that receives its data (GPIO 1 2 3 17 21 43 44 47 48) and the baud rate (usually 9600). The position of the wearer then appears in the status and goes into the MOB messages.",
+ "La carte n'a pas de GPS. Si vous branchez un module GPS (NMEA 0183, 3,3 V) sur un pad libre, indiquez le pad qui reçoit ses données (GPIO 1 2 3 17 21 43 44 47 48) et le débit (généralement 9600). La position du porteur apparaît alors dans l'état et part dans les messages MOB.",
+ "La placa no tiene GPS. Si conecta un módulo GPS (NMEA 0183, 3,3 V) a un pad libre, indique el pad que recibe sus datos (GPIO 1 2 3 17 21 43 44 47 48) y la velocidad (normalmente 9600). La posición del portador aparece entonces en el estado y va en los mensajes MOB."],
+gpsnofix:['no fix yet','pas encore de position','aún sin posición'],
+gpstile:['Wearer GPS','GPS du porteur','GPS del portador'],
+moitile:['Boat (from the tablet)','Bateau (de la tablette)','Barco (de la tableta)'],
+moisiren:['SIREN','SIRÈNE','SIRENA'],
+mobcode:['Pairing code shown on the tablet (Settings, MOB Messages, Pair a watch)','Code affiché sur la tablette (Réglages, Messages MOB, Appairer une montre)','Código que muestra la tableta (Ajustes, Mensajes MOB, Emparejar un reloj)'],
+mobpair:['Pair','Appairer','Emparejar'],
+pairbusy:['Looking for the tablet... keep the code open on the tablet.','Recherche de la tablette... gardez le code ouvert sur la tablette.','Buscando la tableta... mantenga el código abierto en la tableta.'],
+pairok:['Paired with the tablet {0} (device ID {1}). MOB messages are on.','Appairée avec la tablette {0} (ID appareil {1}). Les messages MOB sont activés.','Emparejado con la tableta {0} (ID del dispositivo {1}). Los mensajes MOB están activados.'],
+pairfail:['Pairing failed: no valid answer in 5 seconds. Check the 6 digits (the code lasts 2 minutes), that the tablet shows it, and that the watch is on the same WiFi network.',"Échec de l'appairage : pas de réponse valide en 5 secondes. Vérifiez les 6 chiffres (le code dure 2 minutes), que la tablette l'affiche et que la montre est sur le même réseau WiFi.",'Falló el emparejamiento: sin respuesta válida en 5 segundos. Compruebe los 6 dígitos (el código dura 2 minutos), que la tableta lo muestra y que el reloj está en la misma red WiFi.'],
+mobscan:['Search EssentialSail','Chercher EssentialSail','Buscar EssentialSail'],
+mobnone:['EssentialSail not found. On the tablet switch on Settings, MOB Messages, Listen for MOB messages, and check that it is on the same WiFi network as the watch.',"EssentialSail introuvable. Sur la tablette activez Réglages, Messages MOB, écoute des messages MOB, et vérifiez qu'elle est sur le même réseau WiFi que la montre.",'EssentialSail no encontrado. En la tableta active Ajustes, Mensajes MOB, escuchar mensajes MOB, y compruebe que está en la misma red WiFi que el reloj.'],
+mobver:['EssentialSail, verified (it answered)','EssentialSail, vérifié (a répondu)','EssentialSail, verificado (respondió)'],
+mobopen:['MOB port open (not verified: paste the pairing link first)',"port MOB ouvert (non vérifié : collez d'abord le lien d'appairage)",'puerto MOB abierto (sin verificar: pegue antes el enlace de emparejamiento)'],
+mobok:['Tablet answering ({0} s ago)','Tablette répond (il y a {0} s)','Tableta responde (hace {0} s)'],
+mobno:['No answer from the tablet yet','Pas encore de réponse de la tablette','Aún sin respuesta de la tableta'],
+mobalarm:['MOB ALARM RAISED','ALARME MOB DÉCLENCHÉE','ALARMA MOB ACTIVADA'],
+mobbad:['Link not complete: set the address, the device ID and the key',"Liaison incomplète : renseignez l'adresse, l'ID et la clé",'Enlace incompleto: indique la dirección, el ID y la clave'],
+mobbadlink:['Not a valid pairing link',"Lien d'appairage non valide",'Enlace de emparejamiento no válido'],
 display:['Display','Affichage','Pantalla'],
 lang:['Language (watch and page)','Langue (montre et page)','Idioma (reloj y página)'],
 dalarm:['Minimum depth (m)','Profondeur minimale (m)','Profundidad mínima (m)'],
@@ -208,10 +261,10 @@ tzhint:['Time comes from NTP (if the WiFi has Internet) or from the GPS (NMEA RM
  "L'heure vient du NTP (si le WiFi a Internet) ou du GPS (NMEA RMC/ZDA). Europe centrale : CET-1CEST,M3.5.0,M10.5.0/3 · UTC : UTC0",
  'La hora viene de NTP (si el WiFi tiene Internet) o del GPS (NMEA RMC/ZDA). Europa central: CET-1CEST,M3.5.0,M10.5.0/3 · UTC: UTC0'],
 theme:['Theme','Thème','Tema'],
-sleep:['Screen timeout','Veille de l'écran','Apagado de pantalla'],
+sleep:['Screen timeout',"Veille de l'écran",'Apagado de pantalla'],
 never:['Never','Jamais','Nunca'],
 raise:['Raise to wake','Lever pour réveiller','Levantar para activar'],
-sleephint:['The screen turns off after this time without touch or buttons (never during an alarm). Touch, a button, an alarm, or raising the watch to look at it wakes it.','L'écran s'éteint après ce délai sans toucher ni bouton (jamais pendant une alarme). Un toucher, un bouton, une alarme ou le geste de lever la montre pour la regarder le réveille.','La pantalla se apaga tras este tiempo sin toque ni botones (nunca durante una alarma). Un toque, un botón, una alarma o levantar el reloj para mirarlo la activa.'],
+sleephint:['The screen turns off after this time without touch or buttons (never during an alarm). Touch, a button, an alarm, or raising the watch to look at it wakes it.',"L'écran s'éteint après ce délai sans toucher ni bouton (jamais pendant une alarme). Un toucher, un bouton, une alarme ou le geste de lever la montre pour la regarder le réveille.",'La pantalla se apaga tras este tiempo sin toque ni botones (nunca durante una alarma). Un toque, un botón, una alarma o levantar el reloj para mirarlo la activa.'],
 th0:['Day','Jour','Día'],
 th1:['Elegant Black','Noir élégant','Negro elegante'],
 th2:['Night (red only)','Nuit (rouge seulement)','Noche (solo rojo)'],
@@ -372,6 +425,17 @@ const E={
 'download timed out':['délai de téléchargement dépassé','tiempo de descarga agotado'],
 'download incomplete':['téléchargement incomplet','descarga incompleta'],
 'checksum mismatch: the file was rejected':['somme de contrôle erronée : le fichier a été refusé','suma de control errónea: el archivo fue rechazado'],
+'MOB address: up to 63 characters':["adresse MOB : 63 caractères au plus",'dirección MOB: hasta 63 caracteres'],
+'MOB address: IP address or host name':["adresse MOB : adresse IP ou nom d'hôte",'dirección MOB: dirección IP o nombre de host'],
+'MOB port: 1-65535':['port MOB : 1-65535','puerto MOB: 1-65535'],
+'MOB device ID: 4-8 characters, A-Z and 0-9':["ID appareil MOB : 4 à 8 caractères, A-Z et 0-9",'ID del dispositivo MOB: 4 a 8 caracteres, A-Z y 0-9'],
+'MOB key: exactly 64 hexadecimal characters':['clé MOB : exactement 64 caractères hexadécimaux','clave MOB: exactamente 64 caracteres hexadecimales'],
+'MOB owner name: up to 24 characters':['nom du porteur MOB : 24 caractères au plus','nombre del dueño MOB: hasta 24 caracteres'],
+'GPS pin: -1 (none) or one of GPIO 1 2 3 17 21 43 44 47 48':["pad GPS : -1 (aucun) ou un des GPIO 1 2 3 17 21 43 44 47 48",'pad GPS: -1 (ninguno) o uno de los GPIO 1 2 3 17 21 43 44 47 48'],
+'GPS pin: already used by the vibration motor':['pad GPS : déjà utilisé par le moteur de vibration','pad GPS: ya lo usa el motor de vibración'],
+'GPS baud rate: 4800, 9600, 19200, 38400, 57600 or 115200':['débit GPS : 4800, 9600, 19200, 38400, 57600 ou 115200','velocidad GPS: 4800, 9600, 19200, 38400, 57600 o 115200'],
+'pairing code: the 6 digits shown on the tablet':['code : les 6 chiffres affichés sur la tablette','código: los 6 dígitos que muestra la tableta'],
+'pairing: cannot create the key':["appairage : impossible de créer la clé",'emparejamiento: no se puede crear la clave'],
 // WiFi state and clock source
 'setup mode (no boat WiFi set)':['mode config (pas de WiFi bateau)','modo config. (sin WiFi del barco)'],
 'connected':['connecté','conectado'],
@@ -409,21 +473,29 @@ async function status(){try{const s=await api('/api/status');
  +tile('TWA / TWS',s.twa!=null?`${s.twa}° / ${s.tws} kn`:'--')+tile('SOG / STW',`${s.sog??'--'} / ${s.stw??'--'} kn`)
  +tile(t('depth'),s.depth!=null?s.depth+' m':'--')+tile(t('battery'),s.batt!=null?`${s.batt}% · ${s.vbat} V${s.chg?' · '+t('charging'):''}`:(s.pmu?t('nobatt'):'--'))
  +tile(t('watchtime'),s.time||'--')+(s.alert?tile(t('colal'),t('active')):s.snooze?tile(t('snoozed'),Math.floor(s.snooze/60)+':'+String(s.snooze%60).padStart(2,'0')):'')
- +(s.ap?tile(t('setupwifi'),s.ap):'');
+ +(s.ap?tile(t('setupwifi'),s.ap):'')
+ +(s.gps?tile(t('gpstile'),s.gpsfix?`<a href="https://www.openstreetmap.org/?mlat=${s.gpslat}&mlon=${s.gpslon}#map=17/${s.gpslat}/${s.gpslon}" target="_blank" rel="noopener">${s.gpslat}, ${s.gpslon}</a> · ${s.gpsage} s${s.gpssats>=0?' · '+s.gpssats+' sat':''}`:t('gpsnofix')):'')
+ +(s.moi!=null?tile(t('moitile'),`${s.moisirenon?'<b class="warn">'+t('moisiren')+'</b> ':''}${s.moidist>=0?(s.moidist>=1000?(s.moidist/1000).toFixed(1)+' km':s.moidist+' m'):'--'}${s.moibrg>=0?' · '+s.moibrg+'°':''} · ${s.moi} s`):'');
+ {const m=$('mobstat');if(s.mob==='off')m.textContent='';else if(s.mob!=='idle'){m.textContent=t('mobalarm');m.className='hint warn'}
+  else{m.className='hint';m.textContent=!s.mobok?t('mobbad'):(s.mobackage>=0&&s.mobackage<30?t('mobok',s.mobackage):t('mobno'))}}
  $('wtime').textContent=s.time||t('notset');$('wsrc').textContent=s.time&&s.tsrc?'('+te(s.tsrc)+')':''}catch(e){}}
 async function load(){cfg=await api('/api/config');
  if(cfg.lang)setLang(cfg.lang);
  for(const k of['ssid','host','port','dalarm','cpa','tcpa','name','tz'])$(k).value=cfg[k];
  $('rot').value=cfg.rot;$('theme').value=cfg.theme??(cfg.night?2:0);$('sleep').value=cfg.sleep;$('raise').checked=!!cfg.raise;$('pass').value='';$('webpass').value='';
  $('pass').placeholder=cfg.pass_set?t('unchanged'):t('nonep');$('webpass2').value='';$('fwv').textContent=cfg.fw;
- $('vib').value=cfg.vib;
+ $('vib').value=cfg.vib;$('gpsrx').value=cfg.gpsrx;$('gpsbaud').value=cfg.gpsbaud;
+ $('mobon').checked=!!cfg.mobon;$('mobhost').value=cfg.mobhost||'';$('mobport').value=cfg.mobport||10120;$('mobid').value=cfg.mobid||'';$('mobowner').value=cfg.mobowner||'';
+ $('mobkey').value='';$('mobkey').placeholder=cfg.mobkey_set?t('unchanged'):'';$('moblink').value='';
  $('pwdef').innerHTML=cfg.webpass_default?`<span class="warn">${t('pwwarn')}</span>`:'';
  if(cfg.webpass_default){$('webpass').focus();msg(t('pwfirst'),false)}
  $('openn').checked=false}
 async function save(andRestart){
  if(cfg&&cfg.webpass_default&&!$('webpass').value){msg(t('pwfirst2'),false);return}
  const b={name:$('name').value.trim(),vib:+$('vib').value,ssid:$('ssid').value,host:$('host').value.trim(),lang:$('lang').value,
-  port:+$('port').value,dalarm:+$('dalarm').value,cpa:+$('cpa').value,tcpa:+$('tcpa').value,tz:$('tz').value.trim(),theme:+$('theme').value,sleep:+$('sleep').value,raise:$('raise').checked,rot:+$('rot').value};
+  port:+$('port').value,dalarm:+$('dalarm').value,cpa:+$('cpa').value,tcpa:+$('tcpa').value,tz:$('tz').value.trim(),theme:+$('theme').value,sleep:+$('sleep').value,raise:$('raise').checked,rot:+$('rot').value,
+  mobon:$('mobon').checked,mobhost:$('mobhost').value.trim(),mobport:+$('mobport').value||10120,mobid:$('mobid').value.trim().toUpperCase(),mobowner:$('mobowner').value.trim(),gpsrx:+$('gpsrx').value,gpsbaud:+$('gpsbaud').value};
+ if($('mobkey').value.trim())b.mobkey=$('mobkey').value.trim();
  if($('openn').checked)b.pass='';else if($('pass').value)b.pass=$('pass').value;
  if($('webpass').value){if($('webpass').value!==$('webpass2').value){msg(t('pwdiff'),false);return}
   b.webpass=$('webpass').value}
@@ -500,6 +572,34 @@ $('fwgo').onclick=async()=>{const r=rels[$('fwsel').selectedIndex],m=$('fwmsg');
 // Search NMEA server: the watch scans its own network, this page polls the result
 let nmeaHits=[];
 function nmeaMsg(s,ok){const m=$('nmeamsg');m.textContent=s;m.className=ok?'hint':'warn'}
+$('moblink').oninput=()=>{const v=$('moblink').value.trim();if(!v)return;
+ const q=v.indexOf('?');const P=new URLSearchParams(q>=0?v.slice(q+1):'');
+ if(!v.startsWith('essentialsail-watch://')||P.get('v')!=='1'||!/^[A-Z0-9]{4,8}$/.test(P.get('id')||'')||!/^[0-9a-fA-F]{64}$/.test(P.get('key')||'')){msg(t('mobbadlink'),false);return}
+ $('mobid').value=P.get('id');$('mobkey').value=P.get('key');if(P.get('host'))$('mobhost').value=P.get('host');$('mobport').value=P.get('port')||10120;$('mobon').checked=true;msg('',true)};
+$('mobpair').onclick=async()=>{const b=$('mobpair'),m=$('mobpairmsg'),code=$('mobcode').value.replace(/\s/g,'');
+ if(!/^[0-9]{6}$/.test(code)){m.textContent=te('pairing code: the 6 digits shown on the tablet');m.className='warn';return}
+ b.disabled=true;m.textContent=t('pairbusy');m.className='hint';
+ try{const r=await post('/api/mobpair',{code});if(!r.ok){m.textContent=te(r.error);m.className='warn';b.disabled=false;return}
+  const tm=setInterval(async()=>{try{const s=await api('/api/mobpair');if(s.state==='busy')return;
+   clearInterval(tm);b.disabled=false;
+   if(s.state==='ok'){m.textContent=t('pairok',s.host,s.id);m.className='hint';$('mobcode').value='';await load()}
+   else{m.textContent=t('pairfail');m.className='warn'}}catch(e){}},1000)}
+ catch(e){m.textContent=t('nnostart');m.className='warn';b.disabled=false}};
+let mobHits=[];
+function mobScanMsg(s,ok){const m=$('mobscanmsg');m.textContent=s;m.className=ok?'hint':'warn'}
+$('moblist').onchange=()=>{const h=mobHits[$('moblist').selectedIndex];if(h){$('mobhost').value=h.ip;$('mobport').value=h.port}};
+$('mobscan').onclick=async()=>{const b=$('mobscan');b.disabled=true;$('moblist').hidden=true;mobScanMsg(t('nsearch'),true);
+ try{const r=await api('/api/mobscan',{method:'POST'});if(!r.ok){mobScanMsg(te(r.error),false);b.disabled=false;return}
+  const tm=setInterval(async()=>{try{const s=await api('/api/mobscan');
+   if(s.running){mobScanMsg(t('nsearchp',s.progress),true);return}
+   clearInterval(tm);b.disabled=false;
+   mobHits=s.hits.sort((a,b)=>b.nmea-a.nmea);
+   if(!mobHits.length){mobScanMsg(t('mobnone'),false);return}
+   const L=$('moblist');L.innerHTML='';
+   mobHits.forEach(h=>{const o=document.createElement('option');o.textContent=`${h.ip}:${h.port}  ${h.nmea?t('mobver'):t('mobopen')}`;L.appendChild(o)});
+   L.hidden=false;L.selectedIndex=0;L.onchange();
+   mobScanMsg(t('nfound',mobHits.length),true)}catch(e){}},1000)}
+ catch(e){mobScanMsg(t('nnostart'),false);b.disabled=false}};
 $('nmealist').onchange=()=>{const h=nmeaHits[$('nmealist').selectedIndex];if(h){$('host').value=h.ip;$('port').value=h.port}};
 $('nmeascan').onclick=async()=>{const b=$('nmeascan');b.disabled=true;$('nmealist').hidden=true;nmeaMsg(t('nsearch'),true);
  try{const r=await api('/api/nmeascan',{method:'POST'});if(!r.ok){nmeaMsg(te(r.error),false);b.disabled=false;return}
