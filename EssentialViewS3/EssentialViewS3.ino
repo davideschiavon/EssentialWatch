@@ -1728,7 +1728,8 @@ void render() {
   uint32_t t0 = micros();
   if (mode != M_DASH) cv->fillScreen(TH.bg);   // the dashboard backdrop covers the whole screen anyway
   switch (mode) {
-    case M_DASH: drawBackdrop(); if (page == 0) pageClock(); else if (page == 1) pageWind(); else if (page == 2) pageSpeedDepth(); else if (page == PAGE_AIS) pageAis(); else pageBattery(); break;
+    case M_DASH: if (page == 0) cv->fillScreen(TH.bg); else drawBackdrop();   // the clock has a plain background (no gradient/glows)
+      if (page == 0) pageClock(); else if (page == 1) pageWind(); else if (page == 2) pageSpeedDepth(); else if (page == PAGE_AIS) pageAis(); else pageBattery(); break;
     case M_MENU: drawMenu(); drawKeybar(); break;
     case M_EDIT: drawEdit(); drawKeybar(); break;
     case M_SCAN: drawScan(); drawKeybar(); break;
